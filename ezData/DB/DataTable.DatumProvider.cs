@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using static System.Diagnostics.Debug;
 
 
@@ -8,79 +9,113 @@ namespace easyLib.DB
 {
     partial class DataTable<T>
     {
+        /*
+         * Version: 1
+         */
         class DatumProvider: IDatumProvider
         {
             readonly DataTable<T> m_table;
+            int m_cxnCount;
 
-            public event Action<int[]> DataDeleted;
-            public event Action<int[]> DataDeleting;
-            public event Action<int[] , IDatum[]> DataInserted;
+            public event Action<IList<int>> DataDeleted;
+            public event Action<IList<int>> DataDeleting;
+            public event Action<IList<int> , IList<IDatum>> DataInserted;
             public event Action<int> DatumDeleted;
             public event Action<int> DatumDeleting;
             public event Action<int , IDatum> DatumInserted;
             public event Action<int , IDatum> DatumReplaced;
             public event Action<int , IDatum> DatumReplacing;
             public event Action Invalidated;
-                        
-            
-            public DatumProvider(DataTable<T> table)
+
+
+            public DatumProvider(DataTable<T> table)    //nothrow
             {
                 Assert(table != null);
 
                 m_table = table;
             }
 
+            public bool IsConnected { get; private set; }   //nothrow            
+            public bool CanRead => IsConnected; //nothrow
+            public bool CanWrite => IsConnected; //nothrow
+            public bool AutoFlush { get; set; } //nothrow
 
-            public bool IsConnected => m_table.IsOpen;
-            public bool IsDisposed => m_table.IsDisposed;
-            public bool AutoFlush { get; set; }
-
-
-            public int Count
+            public int Count    //nothrow
             {
                 get
                 {
                     Assert(IsConnected);
-                    return m_table.DataCount;
+
+                    lock (m_table)
+                        return m_table.DataCount;
                 }
             }
 
-            public uint DataVersion
+            public uint DataVersion //nothrow
             {
                 get
                 {
                     Assert(IsConnected);
-                    return m_table.Version;
+
+                    lock (m_table)
+                        return m_table.Header.Version;
                 }
 
                 set
                 {
                     Assert(IsConnected);
-                    m_table.Version = value;
+
+                    lock (m_table)
+                        m_table.Header.Version = value;
                 }
             }
 
+            public IDataSourceInfo SourceInfo   //nothrow
+            {
+                get
+                {
+                    Assert(IsConnected);
+
+                    lock (m_table)
+                        return m_table.Header;
+                }
+            }
 
             public void Connect()
             {
-                Assert(!IsConnected);
+                lock (m_table)
+                {
+                    if (!IsConnected)
+                    {
+                        m_table.Connect();
+                        IsConnected = true;
+                    }
 
-                m_table.Open();
-                RegisterHandlers();
+                    ++m_cxnCount;
+                }
 
                 ProvidersTracker.RegisterProvider(this , m_table.ID);
+
+                Assert(IsConnected);
             }
 
-            public void Delete(int[] indices)
+            public void Delete(IList<int> indices)
             {
                 Assert(IsConnected);
                 Assert(indices != null);
                 Assert(indices.Any(ndx => ndx < 0 || ndx >= Count) == false);
 
-                m_table.Delete(indices);
+                lock (m_table)
+                {
+                    DataDeleting?.Invoke(indices);
 
-                if (AutoFlush)
-                    m_table.Flush();
+                    m_table.Delete(indices);
+
+                    if (AutoFlush)
+                        m_table.Flush();
+
+                    DataDeleted?.Invoke(indices);
+                }
             }
 
             public void Delete(int ndx)
@@ -88,149 +123,199 @@ namespace easyLib.DB
                 Assert(IsConnected);
                 Assert(ndx >= 0 && ndx < Count);
 
-                m_table.Delete(ndx);
+                lock (m_table)
+                {
+                    DatumDeleting?.Invoke(ndx);
 
-                if (AutoFlush)
-                    m_table.Flush();
+                    m_table.Delete(ndx);
+
+                    if (AutoFlush)
+                        m_table.Flush();
+
+                    DatumDeleted?.Invoke(ndx);
+                }
             }
 
             public void Disconnect()
             {
-                if (IsConnected)
-                {
-                    UnregisterHandlers();
-                    m_table.Close();
+                lock (m_table)
+                    if (IsConnected && --m_cxnCount == 0)
+                    {
+                        m_table.Disconnect();
+                        IsConnected = false;
+                    }
 
-                    ProvidersTracker.UnregisterProvider(this);
-                }
+                ProvidersTracker.UnregisterProvider(this);
             }
-
-            public void Dispose() => Disconnect();
-
-            public IEnumerable<IDatum> Enumerate()
-            {
-                Assert(IsConnected);
-
-                if (Count > 0)
-                    return EnumerateData(0);
-
-                return Enumerable.Empty<T>().Cast<IDatum>();
-            }
-
-            public IEnumerable<IDatum> Enumerate(int ndxFirst)
-            {
-                Assert(IsConnected);
-                Assert(ndxFirst >= 0 && ndxFirst < Count);
-
-                return EnumerateData(ndxFirst);
-            }
-
-            public IDatum[] Get(int[] indices)
-            {
-                Assert(IsConnected);
-                Assert(indices != null);
-                Assert(indices.Any(ndx => ndx < 0 || ndx >= Count) == false);
-                return m_table.Get(indices) as IDatum[];                
-            }
-
-            public IDatum Get(int ndx)
-            {
-                Assert(IsConnected);
-                Assert(ndx >= 0 && ndx < Count);
-
-                return m_table.Get(ndx);
-            }
-
-            public uint GetNextAutoID()
-            {
-                Assert(IsConnected);
-
-                return m_table.GetNextAutoID();
-            }
-
-            public void Insert(IDatum[] items)
-            {
-                Assert(IsConnected);
-                Assert(items.OfType<T>().Count() == items.Length);
-
-                m_table.Insert(items as T[]);
-
-                if (AutoFlush)
-                    m_table.Flush();
-            }
-
-            public void Insert(IDatum item)
-            {
-                Assert(IsConnected);
-                Assert(item is T);
-
-                m_table.Insert((T)item);
-
-                if (AutoFlush)
-                    m_table.Flush();
-            }
-
-            public IDisposable Lock() => m_table.Lock();
-
-            public IDisposable TryLock() => m_table.TryLock();
-
-            public void Replace(int ndx , IDatum item)
-            {
-                Assert(IsConnected);
-                Assert(item is T);
-                Assert(ndx >= 0 && ndx < Count);
-
-                m_table.Replace(ndx , (T)item);
-
-                if (AutoFlush)
-                    m_table.Flush();
-            }
-
-
-            //private:
-            IEnumerable<IDatum> EnumerateData(int ndxFirst)
-            {
-                for (int ndx = ndxFirst; ndx < Count; ++ndx)
-                    yield return m_table.Get(ndx);                   
-            }
-
-            void UnregisterHandlers()
-            {
-                m_table.DataDeleted -= Table_DataDeleted;
-                m_table.DataDeleting -= Table_DataDeleting;
-                m_table.DataInserted -= Table_DataInserted;
-                m_table.DatumDeleted -= Table_DatumDeleted;
-                m_table.DatumDeleting -= Table_DatumDeleting;
-                m_table.DatumReplaced -= Table_DatumReplaced;
-                m_table.DatumReplacing -= Table_DatumReplacing;
-                m_table.DatumInserted -= Table_DatumInserted;
-                m_table.ProvidersInvalidated -= Table_ProviderInvalidated;
-            }
-
-            void RegisterHandlers()
-            {
-                m_table.DataDeleted += Table_DataDeleted;
-                m_table.DataDeleting += Table_DataDeleting;
-                m_table.DataInserted += Table_DataInserted;
-                m_table.DatumDeleted += Table_DatumDeleted;
-                m_table.DatumDeleting += Table_DatumDeleting;
-                m_table.DatumReplaced += Table_DatumReplaced;
-                m_table.DatumReplacing += Table_DatumReplacing;
-                m_table.DatumInserted += Table_DatumInserted;
-                m_table.ProvidersInvalidated += Table_ProviderInvalidated;
-            }
-
-            //handlers:
-            private void Table_ProviderInvalidated() => Invalidated?.Invoke();
-            private void Table_DatumInserted(int ndx , T datum) => DatumInserted?.Invoke(ndx , datum);
-            private void Table_DatumReplacing(int ndx , T datum) => DatumReplacing?.Invoke(ndx , datum);
-            private void Table_DatumReplaced(int ndx , T datum) => DatumReplaced?.Invoke(ndx , datum);
-            private void Table_DatumDeleting(int ndx) => DatumDeleting?.Invoke(ndx);
-            private void Table_DatumDeleted(int ndx) => DatumDeleted?.Invoke(ndx);
-            private void Table_DataInserted(int[] indices , T[] data) => DataInserted(indices , data as IDatum[]);
-            private void Table_DataDeleting(int[] indices) => DataDeleting(indices);
-            private void Table_DataDeleted(int[] indices) => DataDeleted(indices);
         }
 
+        public void Dispose()   //nothrow
+        {
+            try
+            {
+                Disconnect();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Exception shut down in DataTable.DatumProvider.Dispose: {ex.Message}");
+            }
+        }
+
+        public void Clear()
+        {
+            Assert(IsConnected);
+
+            lock (m_table)
+            {
+                m_table.Clear();
+
+                if (AutoFlush)
+                    m_table.Flush();
+
+                Invalidated?.Invoke();
+            }
+
+            Assert(Count == 0);
+        }
+
+        public IEnumerable<IDatum> Enumerate()
+        {
+            Assert(IsConnected);
+
+            lock (m_table)
+            {
+                if (m_table.DataCount > 0)
+                    return EnumerateData(0);
+            }
+
+            return Enumerable.Empty<T>().Cast<IDatum>();
+        }
+
+        public IEnumerable<IDatum> Enumerate(int ndxFirst)
+        {
+            Assert(IsConnected);
+            Assert(ndxFirst >= 0 && ndxFirst < Count);
+
+            return EnumerateData(ndxFirst);
+        }
+
+        public IList<IDatum> Get(IList<int> indices)
+        {
+            Assert(IsConnected);
+            Assert(indices != null);
+            Assert(indices.Any(ndx => ndx < 0 || ndx >= Count) == false);
+
+            lock (m_table)
+                return m_table.Get(indices) as IList<IDatum>;
+        }
+
+        public IDatum Get(int ndx)
+        {
+            Assert(IsConnected);
+            Assert(ndx >= 0 && ndx < Count);
+
+            lock (m_table)
+                return m_table.Get(ndx);
+        }
+
+        public uint GetNextAutoID()
+        {
+            Assert(IsConnected);
+
+            lock (m_table)
+                return m_table.GetNextAutoID();
+        }
+
+        public void Insert(IList<IDatum> items)
+        {
+            Assert(IsConnected);
+            Assert(items.OfType<T>().Count() == items.Count);
+
+            lock (m_table)
+            {
+                IList<int> indices = m_table.Insert(items as IList<T>);
+
+                if (AutoFlush)
+                    m_table.Flush();
+
+                DataInserted?.Invoke(indices , items);
+            }
+        }
+
+        public void Insert(IDatum item)
+        {
+            Assert(IsConnected);
+            Assert(item is T);
+
+            lock (m_table)
+            {
+                int ndx = m_table.Insert((T)item);
+
+                if (AutoFlush)
+                    m_table.Flush();
+
+                DatumInserted?.Invoke(ndx , item);
+            }
+        }
+
+        public IDisposable Lock()   //nothrow
+        {
+            Monitor.Enter(m_table);
+
+            return new AutoReleaser(Unlock);
+        }
+
+        public IDisposable TryLock()    //nothrow
+        {
+            if (Monitor.TryEnter(m_table))
+                return new AutoReleaser(Unlock);
+
+            return null;
+        }
+
+        public void Replace(int ndx , IDatum item)
+        {
+            Assert(IsConnected);
+            Assert(item is T);
+            Assert(ndx >= 0 && ndx < Count);
+
+            lock (m_table)
+            {
+                Action<int , IDatum> handler = DatumReplacing;
+
+                if (handler != null)
+                {
+                    IDatum oldDatum = m_table.Get(ndx);
+                    handler(ndx , item);
+                }
+
+                ndx = m_table.Replace(ndx , (T)item);
+
+                if (AutoFlush)
+                    m_table.Flush();
+
+                DatumReplaced?.Invoke(ndx , item);
+            }
+        }
+
+
+        //private:
+        IEnumerable<IDatum> EnumerateData(int ndx)
+        {
+            while (true)
+                lock (m_table)
+                {
+                    if (ndx >= m_table.DataCount)
+                        break;
+
+                    IDatum datum = m_table.Get(ndx++);
+
+                    yield return datum;
+                }
+        }
+
+        void Unlock() => Monitor.Exit(m_table); //nothrow
     }
+}
 }

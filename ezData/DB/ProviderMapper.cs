@@ -6,6 +6,9 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.DB
 {
+    /*
+     * Version: 1
+     */ 
     public enum AggregationMode_t
     {
         Accepted,
@@ -13,6 +16,9 @@ namespace easyLib.DB
     }
 
 
+    /*
+     * Version: 1
+     */ 
     sealed class ProviderMapper<T>
     {
         readonly Predicate<T> m_filter;
@@ -21,7 +27,7 @@ namespace easyLib.DB
         readonly IDatumGetter<T> m_source;
 
 
-        public ProviderMapper(IDatumGetter<T> source , Predicate<T> filter , AggregationMode_t mode)
+        public ProviderMapper(IDatumGetter<T> source , Predicate<T> filter , AggregationMode_t mode)    //nothrow
         {
             Assert(source != null);
             Assert(filter != null);
@@ -32,12 +38,12 @@ namespace easyLib.DB
         }
 
 
-        public IDatumGetter<T> Source => m_source;
-        public AggregationMode_t AggregationMode => m_aggMode;
-        public Predicate<T> Filter => m_filter;
-        public bool IsConnected { get; private set; }
+        public IDatumGetter<T> Source => m_source;  //nothrow
+        public AggregationMode_t AggregationMode => m_aggMode;  //nothrow
+        public Predicate<T> Filter => m_filter; //nothrow
+        public bool IsConnected { get; private set; }   //nothrow
 
-        public int Count
+        public int Count    //nothrow
         {
             get
             {
@@ -66,16 +72,18 @@ namespace easyLib.DB
             IsConnected = true;
         }
 
-        public void Disconnect()
+        public void Disconnect()    //nothrow
         {
             if (IsConnected)
             {
                 m_srcIndices.Clear();
                 IsConnected = false;
             }
+
+            Assert(!IsConnected);
         }
 
-        public bool IsSelected(int ndxItem)
+        public bool IsSelected(int ndxItem) //nothrow
         {
             Assert(IsConnected);
 
@@ -90,7 +98,7 @@ namespace easyLib.DB
             return isOk;
         }
 
-        public int FromSourceIndex(int ndxSrcItem)
+        public int FromSourceIndex(int ndxSrcItem)  //nothrow
         {
             Assert(IsConnected);
             Assert(IsSelected(ndxSrcItem));
@@ -124,7 +132,7 @@ namespace easyLib.DB
             return ndx;
         }
 
-        public int ToSourceIndex(int ndxItem)
+        public int ToSourceIndex(int ndxItem)   //nothrow
         {
             Assert(IsConnected);
 
@@ -156,7 +164,7 @@ namespace easyLib.DB
             return result;
         }
 
-        public void OnSourceItemInserted(int ndxItem , T item)
+        public void OnSourceItemInserted(int ndxItem , T item)  //nothrow
         {
             Assert(IsConnected);
 
@@ -179,7 +187,7 @@ namespace easyLib.DB
                 m_srcIndices.Insert(pos , ndxItem);    //TODO: optimize                     
         }
 
-        public void OnSourceItemDeleted(int ndxItem)
+        public void OnSourceItemDeleted(int ndxItem)    //nothrow
         {
             Assert(IsConnected);
             
@@ -195,7 +203,7 @@ namespace easyLib.DB
 
         }
 
-        public void OnSourceItemReplaced(int ndxItem , T item)
+        public void OnSourceItemReplaced(int ndxItem , T item)  //nothrow
         {
             Assert(IsConnected);
 

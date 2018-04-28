@@ -1,16 +1,11 @@
-﻿using System;
-
+﻿/*
+ * Version: 1
+ */  
 namespace easyLib.DB
 {
-    public interface IDataSource<T>: IDisposable
+    public interface IDataSource<T>
     {
-        uint ID { get; }
-        uint Version { get; }
-        DateTime LastAccessTime { get; }
-        DateTime CreationTime { get; }
-        DateTime LastWriteTime { get; }
-        IDatumProvider DataProvider { get; }
-        bool IsDisposed { get; }
-        int DataCount { get; }
+        uint ID { get; }    //nothhrow
+        IDatumProvider DataProvider { get; }    //nothrow
     }
 }

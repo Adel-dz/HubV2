@@ -6,9 +6,12 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.Extensions
 {
+    /*
+     * Version: 1
+     */ 
     public static class Enumerables
     {
-        public static IEnumerable<T> AsEnumerable<T>(this IEnumerable seq)
+        public static IEnumerable<T> AsEnumerable<T>(this IEnumerable seq)  //nothrow
         {
             Assert(seq != null);
 
@@ -16,7 +19,11 @@ namespace easyLib.Extensions
                 yield return item;
         }
 
-        public static IEnumerable<T> Add<T>(this IEnumerable<T> seq , params T[] items) => 
-            seq.Concat(items);
+        public static IEnumerable<T> Add<T>(this IEnumerable<T> seq , params T[] items) //nothrow
+        {
+            Assert(seq != null);
+
+            return seq.Concat(items);
+        }
     }
 }

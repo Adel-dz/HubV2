@@ -7,19 +7,40 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.DB
 {
-
-    public interface IKeyIndexer<T>
+    /*
+     * Version: 1
+     */
+    public interface IKeyIndexer<T>: ILockable
     {
-        IDatumAccessor<T> Source { get; }
-        IEnumerable<uint> Keys { get; }
+        bool IsConnected { get; }   //nothrow
+        IDatumAccessor<T> Source { get; }   //nothrow
+
+        /* Pre:
+         * - IsConnected
+         */
+        IEnumerable<uint> Keys { get; } //nothrow
+
+        /* Pre:
+         * - IsConnected
+         */
         T this[uint datumID] { get; }
 
+        /* Pr:
+         * - IsConnected
+         */
         T Get(uint datumID);
-        int IndexOf(uint datumID);
+
+        /* Pre:
+         * - IsConnected
+         */
+        int IndexOf(uint datumID);  //nothrow
     }
+    //------------------------------------------------------
 
 
-
+    /*
+     * Version: 1
+     */ 
     public interface IKeyIndexer: IKeyIndexer<IDatum>, IDisposable
     {
         event Action<IDatum> DatumInserted;
@@ -27,20 +48,26 @@ namespace easyLib.DB
         event Action<IDatum> DatumDeleted;
         event Action<IDatum[]> DataDeleted;
         event Action<IDatum> DatumReplaced;
-        event Action Reset;
+        event Action Invalidated;
 
-
-        bool IsDisposed { get; }
-        bool IsConnected { get; }
-
+        /* Pre:
+         * - IsConnected == false
+         * 
+         * Post:
+         * - IsConnected == true
+         */
         void Connect();
+
+        /* Post:
+         * - IsConnected == false
+         */
         void Disconnect();
-        IDisposable Lock();
-        IDisposable TryLock();
     }
+    //--------------------------------------------------------------------
 
-
-
+    /*
+     * Version: 1
+     */ 
     public class KeyIndexer: IKeyIndexer
     {
         readonly IDatumProvider m_source;
@@ -54,10 +81,10 @@ namespace easyLib.DB
         public event Action<IDatum> DatumDeleted;
         public event Action<IDatum> DatumInserted;
         public event Action<IDatum> DatumReplaced;
-        public event Action Reset;
+        public event Action Invalidated;
 
 
-        public KeyIndexer(IDatumProvider source)
+        public KeyIndexer(IDatumProvider source)    //nothrow
         {
             Assert(source != null);
 
@@ -66,12 +93,10 @@ namespace easyLib.DB
 
         public IDatum this[uint datumID] => Get(datumID);
 
-        public bool IsConnected { get; private set; }
-        public bool IsDisposed { get; private set; }
-        public IDatumAccessor<IDatum> Source => m_source;
-        public int ConnectionsCount { get; private set; }
+        public bool IsConnected { get; private set; }   //nothrow
+        public IDatumAccessor<IDatum> Source => m_source;   //nothrow
 
-        public IEnumerable<uint> Keys
+        public IEnumerable<uint> Keys   //nothrow
         {
             get
             {
@@ -84,14 +109,12 @@ namespace easyLib.DB
 
         public void Connect()
         {
-            Assert(!IsDisposed);
+            Assert(!IsConnected);
 
             lock (m_lock)
             {
                 if (!IsConnected)
                 {
-                    Assert(ConnectionsCount == 0);
-
                     m_source.Connect();
                     Load();
                     RegisterHandlers();
@@ -131,7 +154,7 @@ namespace easyLib.DB
 
                 DatumDeleted = DatumInserted = DatumReplaced = null;
                 DataDeleted = DataInserted = null;
-                Reset = null;
+                Invalidated = null;
 
                 IsDisposed = true;
             }

@@ -7,40 +7,62 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.DB
 {
-    public interface IAttrIndexer<TAttr, TDatum>
+    public interface IAttrIndexer<TAttr, TDatum>: ILockable
     {
+        bool IsConnected { get; }
         IDatumAccessor<TDatum> Source { get; }
+
+        /* Pre:
+         * - IsConnected
+         * - attr != null
+         * 
+         * Post:
+         * - Result != null
+         */
         IEnumerable<TDatum> this[TAttr attr] { get; }
+
+        /* Pre:
+         * - IsConnected
+         * 
+         * Post:
+         * Result != null
+         */
         IEnumerable<TAttr> Attributes { get; }
 
+        /* Pre:
+         * - IsConnected
+         * - attr != null
+         * 
+         * Post:
+         * - Result != null
+         */
         IEnumerable<TDatum> Get(TAttr attr);
+
+        /* Pre:
+         * - IsConnected
+         * - attr != null
+         * 
+         * Post:
+         * - Result != null
+         */
         IEnumerable<int> IndexOf(TAttr attr);
     }
+    //---------------------------------------------------
 
 
-
-    public interface IAttrIndexer<T>: IAttrIndexer<T , IDatum>, IDisposable
+    public interface IAttrIndexer<T>: IAttrIndexer<T , IDatum>
     {
         event Action<IDatum> DatumInserted;
-        event Action<IDatum[]> DataInserted;
-        event Action<IDatum[]> DataDeleted;
+        event Action<IList<IDatum>> DataInserted;
+        event Action<IList<IDatum>> DataDeleted;
         event Action<IDatum> DatumDeleted;
         event Action<IDatum> DatumReplaced;
-        event Action Reset;
-
-
-        bool IsDisposed { get; }
-        bool IsConnected { get; }
-
-        void Connect();
-        void Disconnect();
-        IDisposable Lock();
-        IDisposable TryLock();
+        event Action Invalidated;
     }
+    //--------------------------------------------------------------
 
 
-
-    public sealed class AttrIndexer<T>: IAttrIndexer<T>
+    public sealed class AttrIndexer<T>: IAttrIndexer<T>, IDisposable
     {
         readonly object m_lock = new object();
         readonly Dictionary<T , List<int>> m_dataIndices;//mapping attr -> list of datum ndxs
@@ -48,12 +70,12 @@ namespace easyLib.DB
         readonly Func<IDatum , T> m_selector;
         readonly IDatumProvider m_dataProvider;
 
-        public event Action<IDatum[]> DataDeleted;
-        public event Action<IDatum[]> DataInserted;
+        public event Action<IList<IDatum>> DataDeleted;
+        public event Action<IList<IDatum>> DataInserted;
         public event Action<IDatum> DatumDeleted;
         public event Action<IDatum> DatumInserted;
         public event Action<IDatum> DatumReplaced;
-        public event Action Reset;
+        public event Action Invalidated;
 
 
         public AttrIndexer(IDatumProvider provider , Func<IDatum , T> selector , IEqualityComparer<T> comparer)
@@ -73,7 +95,7 @@ namespace easyLib.DB
 
 
         public IEnumerable<IDatum> this[T attr] => Get(attr);
-        public bool IsConnected { get; private set; }
+        public bool IsConnected => ConnectionsCount > 0;
         public bool IsDisposed { get; private set; }
         public IDatumAccessor<IDatum> Source => m_dataProvider;
         public int ConnectionsCount { get; private set; }
@@ -93,16 +115,25 @@ namespace easyLib.DB
         {
             Assert(!IsDisposed);
 
-            lock (m_lock)
+            IDisposable unlocker = Lock();
+
+            try
             {
                 if (++ConnectionsCount == 1)
                 {
                     m_dataProvider.Connect();
                     LoadData();
                     RegisterHandlers();
-
-                    IsConnected = true;
                 }
+            }
+            catch
+            {
+                Disconnect();
+                throw;
+            }
+            finally
+            {
+                unlocker.Dispose();
             }
         }
 
@@ -134,7 +165,7 @@ namespace easyLib.DB
 
                 DatumDeleted = DatumInserted = DatumReplaced = null;
                 DataDeleted = DataInserted = null;
-                Reset = null;
+                Invalidated = null;
 
                 IsDisposed = true;
             }
@@ -208,7 +239,6 @@ namespace easyLib.DB
                     m_dataIndices.Clear();
                     m_cache.Clear();
                     m_dataProvider.Disconnect();
-                    IsConnected = false;
                 }
 
             }
@@ -405,11 +435,11 @@ namespace easyLib.DB
             DatumDeleted?.Invoke(datum);
         }
 
-        private void DataProvider_DataInserted(int[] indices , IDatum[] data)
+        private void DataProvider_DataInserted(IList<int> indices , IList<IDatum> data)
         {
             Monitor.Enter(m_lock);
 
-            Assert(indices.Length == data.Length);
+            Assert(indices.Count == data.Count);
 
             foreach (int ndx in indices)
             {
@@ -438,11 +468,11 @@ namespace easyLib.DB
             DataInserted?.Invoke(data);
         }
 
-        private void DataProvider_DataDeleting(int[] indices)
+        private void DataProvider_DataDeleting(IList<int> indices)
         {
             Monitor.Enter(m_lock);
 
-            for (int i = 0; i < indices.Length; ++i)
+            for (int i = 0; i < indices.Count; ++i)
             {
                 int ndx = indices[i];
                 IDatum datum = m_dataProvider.Get(ndx);
@@ -453,10 +483,10 @@ namespace easyLib.DB
             Monitor.Exit(m_lock);
         }
 
-        private void DataProvider_DataDeleted(int[] Indices)
+        private void DataProvider_DataDeleted(IList<int> Indices)
         {
             Monitor.Enter(m_lock);
-            var data = new IDatum[Indices.Length];
+            var data = new IDatum[Indices.Count];
 
             foreach (int ndx in Indices)
             {
@@ -505,7 +535,7 @@ namespace easyLib.DB
             Close(true);
             Monitor.Exit(m_lock);
 
-            Reset?.Invoke();
+            Invalidated?.Invoke();
         }
     }
 

@@ -7,43 +7,79 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.DB
 {
+    /*
+     * Version: 1
+     */
     public interface IDatumProvider<T>: IDatumAccessor<T>, IDisposable
     {
         event Action<int> DatumDeleting;
         event Action<int> DatumDeleted;
-        event Action<int[]> DataDeleting;
-        event Action<int[]> DataDeleted;
+        event Action<IList<int>> DataDeleting;
+        event Action<IList<int>> DataDeleted;
         event Action<int , T> DatumInserted;
-        event Action<int[] , T[]> DataInserted;
+        event Action<IList<int> , IList<T>> DataInserted;
         event Action<int , T> DatumReplacing;
         event Action<int , T> DatumReplaced;
         event Action Invalidated;
 
-        bool IsDisposed { get; }
-        bool IsConnected { get; }
+        bool IsConnected { get; }   //nothrow
 
+        /* Pre:
+         * - IsConnected
+         */
+        IDataSourceInfo SourceInfo { get; } //nothrow
+
+        /* Pre:
+         * - IsConnected
+         */
+        uint DataVersion { get; set; }  //nothrow
+
+        /* Pre:
+         * - IsConnected
+         */
+        uint GetNextAutoID();   //nothrow
+
+        /* Post:
+        * - IsConnected
+        */
         void Connect();
+
+        /* Post:
+         * - !IsConnected
+         */
         void Disconnect();
-        uint GetNextAutoID();
-        IDisposable Lock();
-        IDisposable TryLock();
+
+        /* Pre:
+         * - IsConnected
+         * 
+         * Post:
+         * - Count == 0
+         */
+        void Clear();
     }
+    //----------------------------------------------------------------
 
-
+    /* 
+     * Version: 1
+     */
     public interface IDatumProvider: IDatumProvider<IDatum>
     { }
+    //-------------------------------------------------------------
 
-
-    public class DatumProvider: IDatumProvider
+    /*
+     * Version: 1
+     */
+    public partial class DatumProvider: IDatumProvider
     {
         readonly IDatumProvider m_src;
         readonly ProviderMapper<IDatum> m_mapper;
         readonly object m_lock = new object();
+        int m_refCount;
 
 
-        public event Action<int[]> DataDeleted;
-        public event Action<int[]> DataDeleting;
-        public event Action<int[] , IDatum[]> DataInserted;
+        public event Action<IList<int>> DataDeleted;
+        public event Action<IList<int>> DataDeleting;
+        public event Action<IList<int> , IList<IDatum>> DataInserted;
         public event Action<int> DatumDeleted;
         public event Action<int> DatumDeleting;
         public event Action<int , IDatum> DatumInserted;
@@ -52,17 +88,20 @@ namespace easyLib.DB
         public event Action Invalidated;
 
 
-        public DatumProvider(IDatumProvider source , Predicate<IDatum> filter , AggregationMode_t aggMode = AggregationMode_t.Rejected)
+        public DatumProvider(IDatumProvider source , Predicate<IDatum> filter , //nothrow
+            AggregationMode_t aggMode = AggregationMode_t.Rejected)
         {
             Assert(source != null);
 
             m_mapper = new ProviderMapper<IDatum>(source , filter , aggMode);
         }
 
-        public int Count => m_src.Count;
+
+        public int Count => m_src.Count;    //nothrow
         public bool IsConnected { get; private set; }
-        public bool IsDisposed { get; private set; }
-        public int ConnectionsCount { get; private set; }
+        public bool CanRead => IsConnected;
+        public bool CanWrite => IsConnected;
+
 
         public bool AutoFlush
         {
@@ -78,13 +117,16 @@ namespace easyLib.DB
             set { m_src.DataVersion = value; }
         }
 
+        public IDataSourceInfo SourceInfo => m_src.SourceInfo;
+
+
         public void Connect()
         {
-            Assert(!IsDisposed);
+            Assert(!IsConnected);
 
-            lock (m_lock)
+            using (Lock())
             {
-                if (++ConnectionsCount == 1)
+                if (!IsConnected)
                 {
                     m_src.Connect();
                     m_mapper.Connect();
@@ -98,44 +140,37 @@ namespace easyLib.DB
 
         public void Disconnect()
         {
-            Monitor.Enter(m_lock);
+            using (Lock())
+                if (IsConnected)
+                {
+                    m_src.Disconnect();
+                    UnregisterHandlers();
+                    m_mapper.Disconnect();
 
-            if (IsConnected)
-            {
-                Close(false);
-
-                if (ConnectionsCount == 0)
-                    Dispose();
-            }
-
-            Monitor.Exit(m_lock);
+                    IsConnected = false;
+                }
         }
 
-        public void Dispose()
+        public void Dispose()   //nothrow
         {
-            Monitor.Enter(m_lock);
-
-            if (!IsDisposed)
+            try
             {
-                if (ConnectionsCount > 0)
-                    Close(true);
+                Disconnect();
 
                 DatumInserted = DatumReplaced = DatumReplacing = null;
                 DatumDeleted = DatumDeleting = null;
                 DataDeleted = DataDeleting = null;
                 DataInserted = null;
-
-                IsDisposed = true;
-
-                ProvidersTracker.UnregisterProvider(this);
             }
-
-            Monitor.Exit(m_lock);
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Exception shut down in DatumProvider.Dispose: {ex.Message}");
+            }
         }
 
-        public uint GetNextAutoID() => m_src.GetNextAutoID();
+        public uint GetNextAutoID() => m_src.GetNextAutoID();   //nothrow
 
-        public IDisposable Lock()
+        public IDisposable Lock()   //nothrow
         {
             Monitor.Enter(m_lock);
             IDisposable unlocker = m_src.Lock();
@@ -143,7 +178,7 @@ namespace easyLib.DB
             return new AutoReleaser(() => Unlock(unlocker));
         }
 
-        public IDisposable TryLock()
+        public IDisposable TryLock()    //nothrow
         {
             if (Monitor.TryEnter(m_lock))
             {
@@ -158,17 +193,26 @@ namespace easyLib.DB
             return null;
         }
 
-        public void Delete(int[] indices)
+        public void Clear()
+        {
+            Assert(IsConnected);
+
+            m_src.Clear();
+
+            Assert(Count == 0);
+        }
+
+        public void Delete(IList<int> indices)
         {
             Assert(IsConnected);
             Assert(indices != null);
             Assert(indices.Any(ndx => ndx < 0 || ndx >= Count) == false);
 
-            Monitor.Enter(m_lock);
-            int[] srcIndices = indices.Select(n => m_mapper.ToSourceIndex(n)).ToArray();
-            Monitor.Exit(m_lock);
-
-            m_src.Delete(srcIndices);
+            using(Lock())
+            {
+                int[] srcIndices = indices.Select(n => m_mapper.ToSourceIndex(n)).ToArray();
+                m_src.Delete(srcIndices);
+            }
         }
 
         public void Delete(int ndx)
@@ -177,14 +221,14 @@ namespace easyLib.DB
             Assert(ndx < Count);
             Assert(0 <= ndx);
 
-            Monitor.Enter(m_lock);
-            int srcIndex = m_mapper.ToSourceIndex(ndx);
-            Monitor.Exit(m_lock);
-
-            m_src.Delete(srcIndex);
+            using(Lock())
+            {
+                int srcIndex = m_mapper.ToSourceIndex(ndx);
+                m_src.Delete(srcIndex);
+            }
         }
 
-        public void Insert(IDatum[] data)
+        public void Insert(IList<IDatum> data)
         {
             Assert(IsConnected);
             Assert(data != null);
@@ -208,11 +252,11 @@ namespace easyLib.DB
             Assert(0 <= ndx);
             Assert(datum != null);
 
-            Monitor.Enter(m_lock);
-            int srcIndex = m_mapper.ToSourceIndex(ndx);
-            Monitor.Exit(m_lock);
-
-            m_src.Replace(srcIndex , datum);
+            using(Lock())
+            {
+                int srcIndex = m_mapper.ToSourceIndex(ndx);
+                m_src.Replace(srcIndex , datum);
+            }
         }
 
         public IEnumerable<IDatum> Enumerate()
@@ -231,17 +275,17 @@ namespace easyLib.DB
             return m_src.Enumerate(ndxFirst);
         }
 
-        public IDatum[] Get(int[] indices)
+        public IList<IDatum> Get(IList<int> indices)
         {
             Assert(IsConnected);
             Assert(indices != null);
             Assert(!indices.Any(x => x < 0 || Count <= x));
 
-            Monitor.Enter(m_lock);
-            int[] srcIndices = indices.Select(x => m_mapper.ToSourceIndex(x)).ToArray();
-            Monitor.Exit(m_lock);
-
-            return m_src.Get(srcIndices);
+            using(Lock())
+            {
+                int[] srcIndices = indices.Select(x => m_mapper.ToSourceIndex(x)).ToArray();
+                return m_src.Get(srcIndices);
+            }
         }
 
         public IDatum Get(int ndx)
@@ -250,11 +294,11 @@ namespace easyLib.DB
             Assert(ndx < Count);
             Assert(ndx >= 0);
 
-            Monitor.Enter(m_lock);
-            int srcIndex = m_mapper.ToSourceIndex(ndx);
-            Monitor.Exit(m_lock);
-
-            return m_src.Get(srcIndex);
+            using(Lock())
+            {
+                int srcIndex = m_mapper.ToSourceIndex(ndx);
+                return m_src.Get(srcIndex);
+            }
         }
 
 
@@ -291,232 +335,194 @@ namespace easyLib.DB
             m_src.Invalidated -= Source_Invalidated;
         }
 
-        void Close(bool closeAll)
-        {
-            if (ConnectionsCount > 0)
-            {
-                if (closeAll)
-                    ConnectionsCount = 1;
-
-                if (--ConnectionsCount == 0)
-                {
-                    UnregisterHandlers();
-                    m_src.Disconnect();
-                    m_mapper.Disconnect();
-                    IsConnected = false;
-                }
-
-                m_src.Disconnect();
-            }
-        }
 
         //handlers:
         private void Source_Invalidated()
         {
-            lock (m_lock) ;
+            lock(m_lock)
             {
                 m_mapper.Disconnect();
                 m_mapper.Connect();
-            }
 
-            Invalidated?.Invoke();
+                Invalidated?.Invoke();
+            }
         }
 
         private void Source_DatumReplacing(int srcIndex , IDatum datum)
         {
-            Monitor.Enter(m_lock);
+            lock (m_lock)
+                if (m_mapper.IsSelected(srcIndex))
+                {
+                    int ndx = m_mapper.FromSourceIndex(srcIndex);
 
-            if (m_mapper.IsSelected(srcIndex))
-            {
-                int ndx = m_mapper.FromSourceIndex(srcIndex);
-
-                if (m_mapper.Filter(datum))
-                    DatumReplacing?.Invoke(ndx , datum);
-                else
-                    DatumDeleting?.Invoke(ndx);
-            }
-
-            Monitor.Exit(m_lock);
+                    if (m_mapper.Filter(datum))
+                        DatumReplacing?.Invoke(ndx , datum);
+                    else
+                        DatumDeleting?.Invoke(ndx);
+                }
         }
 
         private void Source_DatumReplaced(int srcIndex , IDatum datum)
         {
-            Assert(datum != null);
-
-            Monitor.Enter(m_lock);
-
-            bool wasIncluded = m_mapper.IsSelected(srcIndex);
-
-            if (wasIncluded)
+            lock (m_lock)
             {
-                int ndx = m_mapper.FromSourceIndex(srcIndex);
-                m_mapper.OnSourceItemReplaced(srcIndex , datum);
+                bool wasIncluded = m_mapper.IsSelected(srcIndex);
 
-                if (m_mapper.Filter(datum))
-                    DatumReplaced?.Invoke(ndx , datum);
-                else
-                    DatumDeleted?.Invoke(ndx);
-            }
-            else
-            {
-                m_mapper.OnSourceItemReplaced(srcIndex , datum);
-
-                if (m_mapper.Filter(datum))
+                if (wasIncluded)
                 {
                     int ndx = m_mapper.FromSourceIndex(srcIndex);
-                    DatumInserted?.Invoke(ndx , datum);
+                    m_mapper.OnSourceItemReplaced(srcIndex , datum);
+
+                    if (m_mapper.Filter(datum))
+                        DatumReplaced?.Invoke(ndx , datum);
+                    else
+                        DatumDeleted?.Invoke(ndx);
+                }
+                else
+                {
+                    m_mapper.OnSourceItemReplaced(srcIndex , datum);
+
+                    if (m_mapper.Filter(datum))
+                    {
+                        int ndx = m_mapper.FromSourceIndex(srcIndex);
+                        DatumInserted?.Invoke(ndx , datum);
+                    }
                 }
             }
-
-            Monitor.Exit(m_lock);
         }
 
         private void Source_DatumInserted(int srcIndex , IDatum datum)
         {
-            Assert(datum != null);
-
             var handler = DatumInserted;
 
-            Monitor.Enter(m_lock);
-
-            m_mapper.OnSourceItemInserted(srcIndex , datum);
-
-            if (handler != null && m_mapper.Filter(datum))
+            lock (m_lock)
             {
-                int ndx = m_mapper.FromSourceIndex(srcIndex);
-                handler(ndx , datum);
+                m_mapper.OnSourceItemInserted(srcIndex , datum);
+
+                if (handler != null && m_mapper.Filter(datum))
+                {
+                    int ndx = m_mapper.FromSourceIndex(srcIndex);
+                    handler(ndx , datum);
+                }
             }
 
-            Monitor.Exit(m_lock);
         }
 
         private void Source_DatumDeleting(int srcIndex)
         {
             var handler = DatumDeleting;
 
-            Monitor.Enter(m_lock);
-
-            if (handler != null && m_mapper.IsSelected(srcIndex))
-            {
-                int ndx = m_mapper.FromSourceIndex(srcIndex);
-                handler(ndx);
-            }
-
-            Monitor.Exit(m_lock);
+            lock (m_lock)
+                if (handler != null && m_mapper.IsSelected(srcIndex))
+                {
+                    int ndx = m_mapper.FromSourceIndex(srcIndex);
+                    handler(ndx);
+                }
         }
 
         private void Source_DatumDeleted(int srcIndex)
         {
             var handler = DatumDeleted;
 
-            Monitor.Enter(m_lock);
+            lock (m_lock)
+                if (handler != null && m_mapper.IsSelected(srcIndex))
+                {
+                    int ndx = m_mapper.FromSourceIndex(srcIndex);
 
-            if (handler != null && m_mapper.IsSelected(srcIndex))
-            {
-                int ndx = m_mapper.FromSourceIndex(srcIndex);
-
-                m_mapper.OnSourceItemDeleted(srcIndex);
-                handler(ndx);
-            }
-            else
-                m_mapper.OnSourceItemDeleted(srcIndex);
-
-            Monitor.Exit(m_lock);
+                    m_mapper.OnSourceItemDeleted(srcIndex);
+                    handler(ndx);
+                }
+                else
+                    m_mapper.OnSourceItemDeleted(srcIndex);
         }
 
-        private void Source_DataInserted(int[] srcIndices , IDatum[] data)
+        private void Source_DataInserted(IList<int> srcIndices , IList<IDatum> data)
         {
             Assert(srcIndices != null);
             Assert(data != null);
-            Assert(srcIndices.Length == data.Length);
+            Assert(srcIndices.Count == data.Count);
             Assert(data.Count(d => d == null) == 0);
 
-            Monitor.Enter(m_lock);
-
-            for (int i = 0; i < data.Length; ++i)
-                m_mapper.OnSourceItemInserted(srcIndices[i] , data[i]);
-
-
-            var handler = DataInserted;
-
-            if (handler != null)
+            lock (m_lock)
             {
-                var ndxList = new List<int>(srcIndices.Length);
-                var dataList = new List<IDatum>(data.Length);
+                for (int i = 0; i < data.Count; ++i)
+                    m_mapper.OnSourceItemInserted(srcIndices[i] , data[i]);
 
-                for (int i = 0; i < data.Length; ++i)
-                    if (m_mapper.Filter(data[i]))
-                    {
-                        ndxList.Add(m_mapper.FromSourceIndex(srcIndices[i]));
-                        dataList.Add(data[i]);
-                    }
 
-                handler(ndxList.ToArray() , dataList.ToArray());
+                var handler = DataInserted;
+
+                if (handler != null)
+                {
+                    var ndxList = new List<int>(srcIndices.Count);
+                    var dataList = new List<IDatum>(data.Count);
+
+                    for (int i = 0; i < data.Count; ++i)
+                        if (m_mapper.Filter(data[i]))
+                        {
+                            ndxList.Add(m_mapper.FromSourceIndex(srcIndices[i]));
+                            dataList.Add(data[i]);
+                        }
+
+                    handler(ndxList , dataList);
+                }
             }
-
-            Monitor.Exit(m_lock);
         }
 
-        private void Source_DataDeleting(int[] srcIndices)
+        private void Source_DataDeleting(IList<int> srcIndices)
         {
             var handler = DataDeleting;
 
             if (handler != null)
             {
-                var lst = new List<int>(srcIndices.Length);
+                var lst = new List<int>(srcIndices.Count);
 
-                Monitor.Enter(m_lock);
-
-                for (int i = 0; i < srcIndices.Length; ++i)
+                lock (m_lock)
                 {
-                    int srcIndex = srcIndices[i];
-
-                    if (m_mapper.IsSelected(srcIndex))
+                    for (int i = 0; i < srcIndices.Count; ++i)
                     {
-                        int ndx = m_mapper.FromSourceIndex(srcIndex);
-                        lst.Add(ndx);
+                        int srcIndex = srcIndices[i];
+
+                        if (m_mapper.IsSelected(srcIndex))
+                        {
+                            int ndx = m_mapper.FromSourceIndex(srcIndex);
+                            lst.Add(ndx);
+                        }
                     }
+
+                    if (lst.Count > 0)
+                        handler(lst);
                 }
-
-                Monitor.Exit(m_lock);
-
-                if (lst.Count > 0)
-                    handler(lst.ToArray());
             }
         }
 
-        private void Source_DataDeleted(int[] srcIndices)
+        private void Source_DataDeleted(IList<int> srcIndices)
         {
-            Assert(srcIndices != null);
-
-            var handler = DataDeleted;
-
-            Monitor.Enter(m_lock);
-
-            if (handler == null)
-                for (int i = 0; i < srcIndices.Length; i++)
-                    m_mapper.OnSourceItemDeleted(srcIndices[i]);
-            else
+            lock (m_lock)
             {
-                var indices = new List<int>();
+                var handler = DataDeleted;
 
-                for (int i = 0; i < srcIndices.Length; ++i)
+                if (handler == null)
+                    for (int i = 0; i < srcIndices.Count; i++)
+                        m_mapper.OnSourceItemDeleted(srcIndices[i]);
+                else
                 {
-                    int srcIndex = srcIndices[i];
+                    var indices = new List<int>();
 
-                    if (m_mapper.IsSelected(srcIndex))
-                        indices.Add(m_mapper.FromSourceIndex(srcIndex));
+                    for (int i = 0; i < srcIndices.Count; ++i)
+                    {
+                        int srcIndex = srcIndices[i];
 
-                    m_mapper.OnSourceItemDeleted(srcIndex);
+                        if (m_mapper.IsSelected(srcIndex))
+                            indices.Add(m_mapper.FromSourceIndex(srcIndex));
+
+                        m_mapper.OnSourceItemDeleted(srcIndex);
+                    }
+
+                    if (indices.Count > 0)
+                        handler(indices);
                 }
-
-                if (indices.Count > 0)
-                    handler(indices.ToArray());
             }
-
-            Monitor.Exit(m_lock);
         }
-
     }
 
 }

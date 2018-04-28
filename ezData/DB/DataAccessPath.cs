@@ -2,57 +2,58 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using static System.Diagnostics.Debug;
+
 
 namespace easyLib.DB
 {
-    public interface IDataAccessPath: IDisposable
+    public interface IDataAccessPath
     {
-        bool IsDisposed { get; }
-
         IKeyIndexer GetIndexer(uint sourceID);
         IDatumProvider GetProvider(uint sourceID);
     }
+    //-----------------------------------------------------
 
 
-
-    public abstract class DataAccessPath: IDataAccessPath
+    public abstract partial class DataAccessPath: IDataAccessPath, IDisposable
     {
+
+
+        //-------------------------------------------------------------------------------------------------
+
+
         public const int DEFAULT_SIZE = 8;
 
         readonly object m_lock = new object();
-        readonly List<Tuple<uint , DatumProvider>> m_providers;
+        readonly List<Tuple<uint , IDatumProvider>> m_providers;
         readonly List<Tuple<uint , KeyIndexer>> m_indexers;
         readonly int m_maxSize;
 
 
         protected DataAccessPath(int cacheSize = DEFAULT_SIZE)
         {
-            m_providers = new List<Tuple<uint , DatumProvider>>();
+            Assert(cacheSize > 0);
+
+            m_providers = new List<Tuple<uint , IDatumProvider>>();
             m_indexers = new List<Tuple<uint , KeyIndexer>>();
-            m_maxSize = cacheSize == 0 ? DEFAULT_SIZE : cacheSize;
+            m_maxSize = cacheSize;
         }
 
-        public bool IsDisposed { get; private set; }
 
-        public void Dispose()
+        public void Dispose()   //nothrow
         {
             Monitor.Enter(m_lock);
 
-            if (!IsDisposed)
-            {
-                foreach (Tuple<uint , DatumProvider> tpl in m_providers)
-                    tpl.Item2.Disconnect();
+            foreach (Tuple<uint , IDatumProvider> tpl in m_providers)
+                tpl.Item2.Disconnect();
 
-                m_providers.Clear();
+            m_providers.Clear();
 
 
-                foreach (Tuple<uint , KeyIndexer> tpl in m_indexers)
-                    tpl.Item2.Disconnect();
+            foreach (Tuple<uint , KeyIndexer> tpl in m_indexers)
+                tpl.Item2.Disconnect();
 
-                m_indexers.Clear();
-
-                IsDisposed = true;
-            }
+            m_indexers.Clear();
 
             Monitor.Exit(m_lock);
         }
@@ -69,7 +70,7 @@ namespace easyLib.DB
                     ndxer = tpl.Item2;
                 else
                 {
-                    DatumProvider dp = QueryProvider(sourceID);
+                    IDatumProvider dp = QueryProvider(sourceID);
                     ndxer = new KeyIndexer(dp);
 
                     if (m_indexers.Count >= m_maxSize)
@@ -85,11 +86,12 @@ namespace easyLib.DB
 
         public IDatumProvider GetProvider(uint sourceID)
         {
-            lock(m_lock)            
+            lock (m_lock)
                 return QueryProvider(sourceID);
         }
 
-        //protected:
+
+        //protected:        
         protected abstract IDatumProvider DoGetProvider(uint sourceID);
 
 
@@ -107,7 +109,7 @@ namespace easyLib.DB
                             break;
                     }
 
-            if(m_providers.Count >= m_maxSize)
+            if (m_providers.Count >= m_maxSize)
                 for (int ndx = m_providers.Count - 1; ndx >= 0; --ndx)
                     if (m_providers[ndx].Item2.ConnectionsCount == 1)
                     {
@@ -119,11 +121,11 @@ namespace easyLib.DB
                     }
         }
 
-        DatumProvider QueryProvider(uint sourceID)
+        IDatumProvider QueryProvider(uint sourceID)
         {
-            DatumProvider provider = (from tpl in m_providers
-                                      where tpl.Item1 == sourceID
-                                      select tpl.Item2).SingleOrDefault();
+            IDatumProvider provider = (from tpl in m_providers
+                                       where tpl.Item1 == sourceID
+                                       select tpl.Item2).SingleOrDefault();
 
             if (provider != null)
                 return provider;

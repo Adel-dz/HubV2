@@ -1,14 +1,46 @@
-﻿namespace easyLib.DB
-{
-    public interface IDatumSetter<in T>
-    {
-        bool AutoFlush { get; set; }
-        uint DataVersion { get; set; }
+﻿using System.Collections.Generic;
 
+namespace easyLib.DB
+{
+    /*
+     * Version: 1
+     */ 
+    public interface IDatumSetter<T>
+    {
+        bool CanWrite { get; }   //nothrow
+        bool AutoFlush { get; set; }    //nothrow
+
+        /* Pre:
+         * - CanWrite
+         * - item != null
+         */
         void Insert(T item);
-        void Insert(T[] items);
+
+        /* Pre:
+         * - CanWrite
+         * - items != null
+         * - !items.Any( x => x == null)
+         */
+        void Insert(IList<T> items);
+
+        /* Pre:
+         * - CanWrite
+         * - ndx >= 0 && ndx < Count
+         * item != null
+         */
         void Replace(int ndx , T item);
+
+        /* Pre:
+         * - CanWrite
+         * - ndx >= 0 && ndx < Count
+         */
         void Delete(int ndx);
-        void Delete(int[] indices);
+
+        /* Pre:
+         * - CanWrite
+         * - indices != null
+         * - !indices.Any(ndx => ndx <= 0 || ndx >= Count)
+         */
+        void Delete(IList<int> indices);
     }
 }

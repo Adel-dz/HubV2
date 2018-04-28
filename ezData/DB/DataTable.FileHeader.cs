@@ -8,7 +8,7 @@ namespace easyLib.DB
     partial class DataTable<T>
     {
 
-        protected abstract class FileHeader
+        protected abstract class FileHeader: IDataSourceInfo
         {
             DateTime m_tmCreation, m_tmLastWrite, m_tmLastAccess;
             long m_dataOffest;
@@ -16,7 +16,7 @@ namespace easyLib.DB
             uint m_autoID;
             
 
-            public bool IsDirty { get; protected set; }
+            public bool IsDirty { get; protected set; } //nothrow
 
             public DateTime CreationTime
             {
@@ -26,7 +26,7 @@ namespace easyLib.DB
                     m_tmCreation = value;
                     IsDirty = true;
                 }
-            }
+            }   //nothrow
 
             public DateTime LastWriteTime
             {
@@ -36,7 +36,7 @@ namespace easyLib.DB
                     m_tmLastWrite = value;
                     IsDirty = true;
                 }
-            }
+            }   //nothrow
 
             public DateTime LastAccessTime
             {
@@ -46,9 +46,9 @@ namespace easyLib.DB
                     m_tmLastAccess = value;
                     IsDirty = true;
                 }
-            }
+            }   //nothrow
 
-            public uint DataVersion
+            public uint Version
             {
                 get { return m_dataVersion; }
                 set
@@ -56,7 +56,7 @@ namespace easyLib.DB
                     m_dataVersion = value;
                     IsDirty = true;
                 }
-            }
+            }   //nothrow
 
             public long DataOffset
             {
@@ -66,9 +66,9 @@ namespace easyLib.DB
                     m_dataOffest = value;
                     IsDirty = true;
                 }
-            }
+            }   //nothrow
 
-            public uint AutoID
+            public uint AutoID  //nothrow
             {
                 get { return m_autoID; }
                 set
@@ -87,7 +87,7 @@ namespace easyLib.DB
                         throw new CorruptedStreamException();
 
                 DataOffset = reader.ReadLong();
-                DataVersion = reader.ReadUInt();
+                Version = reader.ReadUInt();
                 DateTime creation = reader.ReadTime();
                 DateTime access = reader.ReadTime();
                 DateTime write = reader.ReadTime();
@@ -104,10 +104,12 @@ namespace easyLib.DB
 
             public void Write(ISeekableWriter writer)
             {
+                Assert(writer != null);
+
                 writer.Write(Signature);
                 long dpPos = writer.Position;
                 writer.Write(DataOffset);
-                writer.Write(DataVersion);
+                writer.Write(Version);
                 writer.Write(CreationTime);
                 writer.Write(LastAccessTime);
                 writer.Write(LastWriteTime);
@@ -123,16 +125,24 @@ namespace easyLib.DB
                 IsDirty = false;
             }
 
-            public void Reset()
+            public void Reset() //nothrow
             {
-                DataVersion = 0;
+                Version = 0;
                 AutoID = 0;
-                IsDirty = false;
+                IsDirty = true;
             }
 
             //protected:
-            protected abstract byte[] Signature { get; }
+            protected abstract byte[] Signature { get; }    //nothrow
+
+            /* Pre
+             * - reader != null
+             */              
             protected abstract void DoRead(IReader reader);
+
+            /* Pre
+             * - writer != null
+             */ 
             protected abstract void DoWrite(IWriter writer);
         }
 

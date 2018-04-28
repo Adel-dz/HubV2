@@ -52,6 +52,7 @@
     <Compile Include="IO\SeekableReader.cs" />
     <Compile Include="IO\SeekableWriter.cs" />
     <Compile Include="IO\Writer.cs" />
+    <Compile Include="Lockable.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Timer.cs" />
   </ItemGroup>
