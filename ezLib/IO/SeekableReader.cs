@@ -2,6 +2,9 @@
 
 namespace easyLib.IO
 {
+    /*
+     * Version: 1
+     */ 
     public interface ISeekableReader: IReader
     {
         long Position { get; set; }
@@ -9,16 +12,23 @@ namespace easyLib.IO
     }
 
 
-
+    /*
+     * Version: 1
+     */ 
     public sealed class SeekableReader: RawDataReader, ISeekableReader
     {
-        public SeekableReader(System.IO.FileStream input) :
+        public SeekableReader(System.IO.FileStream input) : //nothrow
             base(input)
-        { }
+        {
+            Assert(input != null);
+            Assert(input.CanRead);
+        }
 
-        public SeekableReader(System.IO.MemoryStream input) :
+        public SeekableReader(System.IO.MemoryStream input) :   //nothrow
             base(input)
-        { }
+        {
+            Assert(input != null);
+        }
         
 
         public long Length => Reader.BaseStream.Length; 

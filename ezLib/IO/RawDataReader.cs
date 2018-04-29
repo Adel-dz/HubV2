@@ -7,12 +7,15 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.IO
 {
+    /*
+     * Version: 1
+     */ 
     public class RawDataReader: IReader
     {
         readonly BinaryReader m_reader;
 
 
-        protected RawDataReader(Stream input, Encoding encoding)
+        protected RawDataReader(Stream input, Encoding encoding)    //nothrow
         {
             Assert(input != null);
             Assert(input.CanRead);
@@ -21,11 +24,10 @@ namespace easyLib.IO
             m_reader = new BinaryReader(input , encoding , true);
         }
 
-        public RawDataReader(Stream input):
+        public RawDataReader(Stream input): //nothrow
             this(input, new UTF8Encoding(false , true))
         { }
-
-
+        
 
         public int Read(byte[] buffer , int bufferOffset , int count)
         {
@@ -68,6 +70,6 @@ namespace easyLib.IO
 
 
         //protected:
-        protected BinaryReader Reader => m_reader;
+        protected BinaryReader Reader => m_reader;  //nothrow
     }
 }

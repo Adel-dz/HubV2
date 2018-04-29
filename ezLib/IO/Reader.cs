@@ -2,6 +2,9 @@
 
 namespace easyLib.IO
 {
+    /*
+     * Version: 1
+     */ 
     public interface IReader
     {
         int Read(byte[] buffer , int bufferOffset , int count);

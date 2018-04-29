@@ -3,6 +3,9 @@
 
 namespace easyLib.IO
 {
+    /*
+     * Version: 1
+     */ 
     public interface ISeekableWriter: IWriter
     {
         long Position { get; set; }
@@ -10,7 +13,9 @@ namespace easyLib.IO
     }
 
 
-
+    /*
+     * Version: 1
+     */ 
     public sealed class SeekableWriter: RawDataWriter, ISeekableWriter
     {
         public SeekableWriter(System.IO.MemoryStream output) :
@@ -19,7 +24,10 @@ namespace easyLib.IO
 
         public SeekableWriter(System.IO.FileStream output) :
             base(output)
-        { }
+        {
+            Assert(output != null);
+            Assert(output.CanWrite);
+        }
         
 
         public long Length => Writer.BaseStream.Length;

@@ -2,10 +2,22 @@
 
 namespace easyLib.IO
 {
+    /*
+     * Version: 1
+     */ 
     public interface IWriter
     {
+        /* Pre:
+         * - bytes != null
+         */ 
         void Write(byte[] bytes);
+
+        /* pre:
+         * - buffer != null
+         * - bufferOffset + count <= buffer.Length
+         */ 
         void Write(byte[] buffer , int bufferOffset , int count);
+
         void Write(byte b);
         void Write(sbyte b);
         void Write(bool b);

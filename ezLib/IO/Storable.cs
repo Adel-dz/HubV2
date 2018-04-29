@@ -3,9 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using static System.Diagnostics.Debug;
+
 
 namespace easyLib.IO
 {
+    /*
+     * Version: 1
+     */ 
     public interface IStorable
     {
         void Read(IReader reader);
@@ -13,10 +18,15 @@ namespace easyLib.IO
     }
 
 
+    /*
+     * Version: 1
+     */ 
     public static class Storables
     {
         public static byte[] GetBytes(this IStorable storable)
         {
+            Assert(storable != null);
+
             var ms = new System.IO.MemoryStream();
             var writer = new RawDataWriter(ms);
 
@@ -27,6 +37,9 @@ namespace easyLib.IO
 
         public static void SetBytes(this IStorable storable , byte[] data)
         {
+            Assert(storable != null);
+            Assert(data != null);
+
             var ms = new System.IO.MemoryStream(data);
             var reader = new RawDataReader(ms);
 

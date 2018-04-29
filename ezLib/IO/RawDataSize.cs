@@ -1,5 +1,8 @@
 ﻿namespace easyLib.IO
 {
+    /*
+     * Version: 1
+     */ 
     public static class RawDataSize
     {
         public const int SizeOfByte = sizeof(byte);

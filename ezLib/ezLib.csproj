@@ -43,7 +43,7 @@
     <Compile Include="AutoReleaser.cs" />
     <Compile Include="Extensions\Enumerables.cs" />
     <Compile Include="Extensions\Tasks.cs" />
-    <Compile Include="IO\BitComStream.cs" />
+    <Compile Include="IO\BitComplementStream.cs" />
     <Compile Include="IO\RawDataReader.cs" />
     <Compile Include="IO\RawDataSize.cs" />
     <Compile Include="IO\RawDataWriter.cs" />

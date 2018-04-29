@@ -8,11 +8,14 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.IO
 {
+    /*
+     * Version: 1
+     */ 
     public class RawDataWriter: IWriter
     {
         readonly BinaryWriter m_writer;
 
-        protected RawDataWriter(Stream output, Encoding encoding)
+        protected RawDataWriter(Stream output, Encoding encoding)   //nothrow
         {
             Assert(output != null);
             Assert(output.CanWrite);
@@ -21,11 +24,10 @@ namespace easyLib.IO
             m_writer = new BinaryWriter(output , encoding , true);
         }
         
-        public RawDataWriter(Stream output) :
+        public RawDataWriter(Stream output) :   //nothrrow
             this(output, new UTF8Encoding(false , true))
         { }
-
-
+        
 
         public void Write(byte b) => m_writer.Write(b);
         public void Write(bool b) => m_writer.Write(b);
@@ -66,7 +68,7 @@ namespace easyLib.IO
 
 
         //protected:
-        protected BinaryWriter Writer => m_writer;
+        protected BinaryWriter Writer => m_writer;  //nothrow
 
     }
 }
