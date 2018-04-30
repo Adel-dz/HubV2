@@ -13,6 +13,7 @@ namespace easyLib.DB
     public interface IKeyIndexer<T>: ILockable
     {
         bool IsConnected { get; }   //nothrow
+        int ConnectionsCount { get; }   //nothrow
         IDatumAccessor<T> Source { get; }   //nothrow
 
         /* Pre:
@@ -74,6 +75,7 @@ namespace easyLib.DB
         readonly object m_lock = new object();
         readonly Dictionary<uint , int> m_ndxTable = new Dictionary<uint , int>();
         readonly Dictionary<int , IDatum> m_cache = new Dictionary<int , IDatum>();
+        int m_refCount;
 
 
         public event Action<IDatum[]> DataDeleted;
@@ -94,6 +96,7 @@ namespace easyLib.DB
         public IDatum this[uint datumID] => Get(datumID);
 
         public bool IsConnected { get; private set; }   //nothrow
+        public int ConnectionsCount => m_refCount;
         public IDatumAccessor<IDatum> Source => m_source;   //nothrow
 
         public IEnumerable<uint> Keys   //nothrow

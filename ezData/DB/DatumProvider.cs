@@ -23,6 +23,7 @@ namespace easyLib.DB
         event Action Invalidated;
 
         bool IsConnected { get; }   //nothrow
+        int ConnectionsCount { get; }   //nothrow
 
         /* Pre:
          * - IsConnected
@@ -97,33 +98,61 @@ namespace easyLib.DB
         }
 
 
-        public int Count => m_src.Count;    //nothrow
-        public bool IsConnected { get; private set; }
-        public bool CanRead => IsConnected;
-        public bool CanWrite => IsConnected;
+        public bool IsConnected => m_refCount > 0;   //nothrow
+        public int ConnectionsCount => m_refCount;
+        public bool CanRead => m_src.CanRead;   //nothrow
+        public bool CanWrite => m_src.CanWrite; //nothrow
 
-
-        public bool AutoFlush
+        public int Count    //nothrow
         {
-            get { return m_src.AutoFlush; }
+            get
+            {
+                Assert(IsConnected);
+
+                return m_src.Count;
+            }
+        }
+
+        public bool AutoFlush   //nothrow
+        {
+            get
+            {
+                return m_src.AutoFlush;
+            }
 
             set { m_src.AutoFlush = value; }
         }
 
-        public uint DataVersion
+        public uint DataVersion //nothrow
         {
-            get { return m_src.DataVersion; }
+            get
+            {
+                Assert(IsConnected);
 
-            set { m_src.DataVersion = value; }
+                return m_src.DataVersion;
+            }
+
+            set
+            {
+                Assert(IsConnected);
+
+                m_src.DataVersion = value;
+            }
         }
 
-        public IDataSourceInfo SourceInfo => m_src.SourceInfo;
+        public IDataSourceInfo SourceInfo   //nothrow
+        {
+            get
+            {
+                Assert(IsConnected);
+
+                return m_src.SourceInfo;
+            }
+        }
 
 
         public void Connect()
         {
-            Assert(!IsConnected);
-
             using (Lock())
             {
                 if (!IsConnected)
@@ -131,23 +160,22 @@ namespace easyLib.DB
                     m_src.Connect();
                     m_mapper.Connect();
                     RegisterHandlers();
-                    IsConnected = true;
-
-                    ProvidersTracker.RegisterProvider(this , m_src);
                 }
+
+                ++m_refCount;
+
+                ProvidersTracker.RegisterProvider(this , m_src);
             }
         }
 
         public void Disconnect()
         {
             using (Lock())
-                if (IsConnected)
+                if (IsConnected && --m_refCount == 0)
                 {
                     m_src.Disconnect();
                     UnregisterHandlers();
                     m_mapper.Disconnect();
-
-                    IsConnected = false;
                 }
         }
 
@@ -168,7 +196,12 @@ namespace easyLib.DB
             }
         }
 
-        public uint GetNextAutoID() => m_src.GetNextAutoID();   //nothrow
+        public uint GetNextAutoID()
+        {
+            Assert(IsConnected);
+
+            return m_src.GetNextAutoID();
+        }
 
         public IDisposable Lock()   //nothrow
         {
@@ -208,7 +241,7 @@ namespace easyLib.DB
             Assert(indices != null);
             Assert(indices.Any(ndx => ndx < 0 || ndx >= Count) == false);
 
-            using(Lock())
+            using (Lock())
             {
                 int[] srcIndices = indices.Select(n => m_mapper.ToSourceIndex(n)).ToArray();
                 m_src.Delete(srcIndices);
@@ -221,7 +254,7 @@ namespace easyLib.DB
             Assert(ndx < Count);
             Assert(0 <= ndx);
 
-            using(Lock())
+            using (Lock())
             {
                 int srcIndex = m_mapper.ToSourceIndex(ndx);
                 m_src.Delete(srcIndex);
@@ -252,7 +285,7 @@ namespace easyLib.DB
             Assert(0 <= ndx);
             Assert(datum != null);
 
-            using(Lock())
+            using (Lock())
             {
                 int srcIndex = m_mapper.ToSourceIndex(ndx);
                 m_src.Replace(srcIndex , datum);
@@ -281,7 +314,7 @@ namespace easyLib.DB
             Assert(indices != null);
             Assert(!indices.Any(x => x < 0 || Count <= x));
 
-            using(Lock())
+            using (Lock())
             {
                 int[] srcIndices = indices.Select(x => m_mapper.ToSourceIndex(x)).ToArray();
                 return m_src.Get(srcIndices);
@@ -294,7 +327,7 @@ namespace easyLib.DB
             Assert(ndx < Count);
             Assert(ndx >= 0);
 
-            using(Lock())
+            using (Lock())
             {
                 int srcIndex = m_mapper.ToSourceIndex(ndx);
                 return m_src.Get(srcIndex);
@@ -303,7 +336,7 @@ namespace easyLib.DB
 
 
         //private:
-        void Unlock(IDisposable srcUnlocker)
+        void Unlock(IDisposable srcUnlocker)    //nothrow
         {
             srcUnlocker.Dispose();
             Monitor.Exit(m_lock);
@@ -320,7 +353,7 @@ namespace easyLib.DB
             m_src.DatumReplaced += Source_DatumReplaced;
             m_src.DatumReplacing += Source_DatumReplacing;
             m_src.Invalidated += Source_Invalidated;
-        }
+        }   //nothrow
 
         void UnregisterHandlers()
         {
@@ -333,13 +366,13 @@ namespace easyLib.DB
             m_src.DatumReplaced -= Source_DatumReplaced;
             m_src.DatumReplacing -= Source_DatumReplacing;
             m_src.Invalidated -= Source_Invalidated;
-        }
+        }   //nothrow
 
 
         //handlers:
         private void Source_Invalidated()
         {
-            lock(m_lock)
+            lock (m_lock)
             {
                 m_mapper.Disconnect();
                 m_mapper.Connect();
@@ -350,7 +383,7 @@ namespace easyLib.DB
 
         private void Source_DatumReplacing(int srcIndex , IDatum datum)
         {
-            lock (m_lock)
+            using (Lock())
                 if (m_mapper.IsSelected(srcIndex))
                 {
                     int ndx = m_mapper.FromSourceIndex(srcIndex);
@@ -364,7 +397,7 @@ namespace easyLib.DB
 
         private void Source_DatumReplaced(int srcIndex , IDatum datum)
         {
-            lock (m_lock)
+            using (Lock())
             {
                 bool wasIncluded = m_mapper.IsSelected(srcIndex);
 
@@ -395,7 +428,7 @@ namespace easyLib.DB
         {
             var handler = DatumInserted;
 
-            lock (m_lock)
+            using (Lock())
             {
                 m_mapper.OnSourceItemInserted(srcIndex , datum);
 
@@ -412,7 +445,7 @@ namespace easyLib.DB
         {
             var handler = DatumDeleting;
 
-            lock (m_lock)
+            using (Lock())
                 if (handler != null && m_mapper.IsSelected(srcIndex))
                 {
                     int ndx = m_mapper.FromSourceIndex(srcIndex);
@@ -424,7 +457,7 @@ namespace easyLib.DB
         {
             var handler = DatumDeleted;
 
-            lock (m_lock)
+            using (Lock())
                 if (handler != null && m_mapper.IsSelected(srcIndex))
                 {
                     int ndx = m_mapper.FromSourceIndex(srcIndex);
@@ -443,7 +476,7 @@ namespace easyLib.DB
             Assert(srcIndices.Count == data.Count);
             Assert(data.Count(d => d == null) == 0);
 
-            lock (m_lock)
+            using (Lock())
             {
                 for (int i = 0; i < data.Count; ++i)
                     m_mapper.OnSourceItemInserted(srcIndices[i] , data[i]);
@@ -476,7 +509,7 @@ namespace easyLib.DB
             {
                 var lst = new List<int>(srcIndices.Count);
 
-                lock (m_lock)
+                using (Lock())
                 {
                     for (int i = 0; i < srcIndices.Count; ++i)
                     {
@@ -497,7 +530,7 @@ namespace easyLib.DB
 
         private void Source_DataDeleted(IList<int> srcIndices)
         {
-            lock (m_lock)
+            using (Lock())
             {
                 var handler = DataDeleted;
 

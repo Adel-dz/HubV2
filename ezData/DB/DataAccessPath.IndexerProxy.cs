@@ -1,16 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Threading;
+using static System.Diagnostics.Debug;
+
 
 namespace easyLib.DB
 {
     partial class DataAccessPath
     {
+        /*
+         * Version: 1
+         */
         class IndexerProxy: IKeyIndexer
         {
-            readonly object m_lock = new object();
+            int m_refCount;
 
 
             public event Action<IDatum[]> DataDeleted
@@ -50,7 +53,7 @@ namespace easyLib.DB
             }
 
 
-            public IndexerProxy(KeyIndexer ndxer)
+            public IndexerProxy(KeyIndexer ndxer)   //nothrow
             {
                 Assert(ndxer != null);
                 Assert(ndxer.IsConnected);
@@ -58,35 +61,15 @@ namespace easyLib.DB
                 Indexer = ndxer;
             }
 
-            public int ConnectionCount { get; private set; }
-            public KeyIndexer Indexer { get; }
-            public bool IsConnected { get; private set; }
+            public int ConnectionsCount => m_refCount;   //nothrow
+            public KeyIndexer Indexer { get; }  //nothrow
+            public bool IsConnected => ConnectionsCount > 0;    //nothrow
 
-            public IDatum this[uint datumID]
-            {
-                get
-                {
-                    Assert(IsConnected);
-                    return Indexer[datumID];
-                }
-            }
+            public IDatum this[uint datumID] => Indexer[datumID];
+            public IEnumerable<uint> Keys => Indexer.Keys;
+            public IDatumAccessor<IDatum> Source => Indexer.Source; //nothrow
 
-            public IEnumerable<uint> Keys
-            {
-                get
-                {
-                    Assert(IsConnected);
-                    return Indexer.Keys;
-                }
-            }
-
-            public IDatumAccessor<IDatum> Source => Indexer.Source;
-
-            public void Connect()
-            {
-                lock
-                Interlocked.Increment(ref m_refCount);
-            }
+            public void Connect() => Interlocked.Increment(ref m_refCount);
 
             public void Disconnect()
             {
@@ -103,11 +86,11 @@ namespace easyLib.DB
                 Assert(m_refCount >= 0);
             }
 
-            public void Dispose() =>
-            public abstract IDatum Get(uint datumID);
-            public abstract int IndexOf(uint datumID);
-            public abstract IDisposable Lock();
-            public abstract IDisposable TryLock();
+            public void Dispose() => Indexer.Dispose(); //nothrow
+            public IDatum Get(uint datumID) => Indexer.Get(datumID);
+            public int IndexOf(uint datumID) => Indexer.IndexOf(datumID);   //nothrow
+            public IDisposable Lock() => Indexer.Lock();    //nothrow
+            public IDisposable TryLock() => Indexer.TryLock();  //nothrow
         }
 
     }

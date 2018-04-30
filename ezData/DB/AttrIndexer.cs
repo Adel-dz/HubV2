@@ -7,14 +7,19 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.DB
 {
+    /*
+     * Version: 1
+     */
     public interface IAttrIndexer<TAttr, TDatum>: ILockable
     {
-        bool IsConnected { get; }
+        bool IsConnected { get; }   //nothrow
+        int ConnectionsCount { get; }   //nothrow;
+
         IDatumAccessor<TDatum> Source { get; }
 
-        /* Pre:
-         * - IsConnected
+        /* Pre:         
          * - attr != null
+         * - IsConnected
          * 
          * Post:
          * - Result != null
@@ -25,13 +30,13 @@ namespace easyLib.DB
          * - IsConnected
          * 
          * Post:
-         * Result != null
-         */
-        IEnumerable<TAttr> Attributes { get; }
+        *  - Result != null
+        */
+        IEnumerable<TAttr> Attributes { get; }  //nothrow
 
         /* Pre:
-         * - IsConnected
          * - attr != null
+         * - IsConnected
          * 
          * Post:
          * - Result != null
@@ -39,17 +44,19 @@ namespace easyLib.DB
         IEnumerable<TDatum> Get(TAttr attr);
 
         /* Pre:
-         * - IsConnected
          * - attr != null
+         * - IsConnected
          * 
          * Post:
          * - Result != null
          */
-        IEnumerable<int> IndexOf(TAttr attr);
+        IEnumerable<int> IndexOf(TAttr attr);   //nothrow
     }
     //---------------------------------------------------
 
-
+    /*
+     * Version: 1
+     */
     public interface IAttrIndexer<T>: IAttrIndexer<T , IDatum>
     {
         event Action<IDatum> DatumInserted;
@@ -58,10 +65,19 @@ namespace easyLib.DB
         event Action<IDatum> DatumDeleted;
         event Action<IDatum> DatumReplaced;
         event Action Invalidated;
+
+        /* Post:
+         * - IsConnected
+         */
+        void Connect();
+
+        void Disconnect();
     }
     //--------------------------------------------------------------
 
-
+    /*
+     * Version: 1
+     */
     public sealed class AttrIndexer<T>: IAttrIndexer<T>, IDisposable
     {
         readonly object m_lock = new object();
@@ -69,6 +85,7 @@ namespace easyLib.DB
         readonly List<Tuple<int , IDatum>> m_cache = new List<Tuple<int , IDatum>>();
         readonly Func<IDatum , T> m_selector;
         readonly IDatumProvider m_dataProvider;
+        int m_refCount;
 
         public event Action<IList<IDatum>> DataDeleted;
         public event Action<IList<IDatum>> DataInserted;
@@ -78,7 +95,8 @@ namespace easyLib.DB
         public event Action Invalidated;
 
 
-        public AttrIndexer(IDatumProvider provider , Func<IDatum , T> selector , IEqualityComparer<T> comparer)
+        public AttrIndexer(IDatumProvider provider , Func<IDatum , T> selector ,    //noththrow
+            IEqualityComparer<T> comparer)
         {
             Assert(provider != null);
             Assert(selector != null);
@@ -89,46 +107,48 @@ namespace easyLib.DB
             m_dataIndices = new Dictionary<T , List<int>>(comparer);
         }
 
-        public AttrIndexer(IDatumProvider provider , Func<IDatum , T> selector) :
+        public AttrIndexer(IDatumProvider provider , Func<IDatum , T> selector) :   //nothrow
             this(provider , selector , EqualityComparer<T>.Default)
         { }
 
 
         public IEnumerable<IDatum> this[T attr] => Get(attr);
-        public bool IsConnected => ConnectionsCount > 0;
-        public bool IsDisposed { get; private set; }
-        public IDatumAccessor<IDatum> Source => m_dataProvider;
-        public int ConnectionsCount { get; private set; }
+        public bool IsConnected => m_refCount > 0;  //nothrow
+        public int ConnectionsCount => m_refCount;
+        public IDatumAccessor<IDatum> Source => m_dataProvider; //nothrow
 
-        public IEnumerable<T> Attributes
+        public IEnumerable<T> Attributes    //nothrow
         {
             get
             {
                 Assert(IsConnected);
 
-                return m_dataIndices.Keys;
+                lock (m_lock)
+                    return m_dataIndices.Keys;
             }
         }
 
 
         public void Connect()
         {
-            Assert(!IsDisposed);
-
             IDisposable unlocker = Lock();
 
             try
             {
-                if (++ConnectionsCount == 1)
+                if (!IsConnected)
                 {
                     m_dataProvider.Connect();
                     LoadData();
                     RegisterHandlers();
                 }
+
+                ++m_refCount;
             }
             catch
             {
-                Disconnect();
+                m_dataIndices.Clear();
+                m_cache.Clear();
+
                 throw;
             }
             finally
@@ -139,38 +159,35 @@ namespace easyLib.DB
 
         public void Disconnect()
         {
-            Assert(!IsDisposed);
+            using (Lock())
+                if (IsConnected)
+                {
+                    if (m_refCount == 1)
+                    {
+                        m_dataProvider.Disconnect();
+                        UnregisterHandlers();
+                        m_dataIndices.Clear();
+                        m_cache.Clear();
+                    }
 
-            Monitor.Enter(m_lock);
-
-            if (IsConnected)
-            {
-                Close(false);
-
-                if (ConnectionsCount == 0)
-                    Dispose();
-            }
-
-            Monitor.Exit(m_lock);
+                    --m_refCount;
+                }
         }
 
-        public void Dispose()
+        public void Dispose()   //nothrow
         {
-            Monitor.Enter(m_lock);
-
-            if (!IsDisposed)
+            try
             {
-                if (IsConnected)
-                    Close(true);
+                Disconnect();
 
                 DatumDeleted = DatumInserted = DatumReplaced = null;
                 DataDeleted = DataInserted = null;
                 Invalidated = null;
-
-                IsDisposed = true;
             }
-
-            Monitor.Exit(m_lock);
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Exception shut down in AttrIndexer.Dispose: {ex.Message}");
+            }
         }
 
         public IEnumerable<IDatum> Get(T attr)
@@ -180,28 +197,30 @@ namespace easyLib.DB
 
             List<int> locs;
 
-            Monitor.Enter(m_lock);
-            m_dataIndices.TryGetValue(attr , out locs);
-            Monitor.Exit(m_lock);
+            using (Lock())
+            {
+                m_dataIndices.TryGetValue(attr , out locs);
 
-            return locs == null ? Enumerable.Empty<IDatum>() : YieldData(locs);
+                return locs == null ? Enumerable.Empty<IDatum>() : YieldData(locs);
+            }
         }
 
-        public IEnumerable<int> IndexOf(T attr)
+        public IEnumerable<int> IndexOf(T attr) //nothrow
         {
             Assert(IsConnected);
             Assert(attr != null);
 
             List<int> locs;
 
-            Monitor.Enter(m_lock);
-            m_dataIndices.TryGetValue(attr , out locs);
-            Monitor.Exit(m_lock);
+            using (Lock())
+            {
+                m_dataIndices.TryGetValue(attr , out locs);
 
-            return locs ?? Enumerable.Empty<int>();
+                return locs ?? Enumerable.Empty<int>();
+            }
         }
 
-        public IDisposable Lock()
+        public IDisposable Lock()   //nothrow
         {
             Monitor.Enter(m_lock);
             IDisposable dpUnlocker = m_dataProvider.Lock();
@@ -209,7 +228,7 @@ namespace easyLib.DB
             return new AutoReleaser(() => Unlock(dpUnlocker));
         }
 
-        public IDisposable TryLock()
+        public IDisposable TryLock()    //nothrow
         {
             if (Monitor.TryEnter(m_lock))
             {
@@ -226,25 +245,7 @@ namespace easyLib.DB
 
 
         //private:
-        void Close(bool closeAll)
-        {
-            if (ConnectionsCount > 0)
-            {
-                if (closeAll)
-                    ConnectionsCount = 1;
-
-                if (--ConnectionsCount == 0)
-                {
-                    UnregisterHandlers();
-                    m_dataIndices.Clear();
-                    m_cache.Clear();
-                    m_dataProvider.Disconnect();
-                }
-
-            }
-        }
-
-        void UnregisterHandlers()
+        void UnregisterHandlers()   //nothrow
         {
             m_dataProvider.DataDeleted -= DataProvider_DataDeleted;
             m_dataProvider.DataDeleting -= DataProvider_DataDeleting;
@@ -278,23 +279,15 @@ namespace easyLib.DB
 
         IEnumerable<IDatum> YieldData(List<int> indices)
         {
-            int ndx = 0;
+            var data = new List<IDatum>(indices.Count);
 
-            while (true)
-            {
-                IDatum datum;
+            for (int i = 0, count = Math.Min(indices.Count , m_dataProvider.Count); i < count; ++i)
+                data.Add(m_dataProvider.Get(indices[i]));
 
-                lock (m_lock)
-                    datum = ndx < indices.Count ? m_dataProvider.Get(indices[ndx++]) : null;
-
-                if (datum == null)
-                    yield break;
-
-                yield return datum;
-            }
+            return data;
         }
 
-        void RegisterHandlers()
+        void RegisterHandlers() //nothrow
         {
             m_dataProvider.DataDeleted += DataProvider_DataDeleted;
             m_dataProvider.DataDeleting += DataProvider_DataDeleting;
@@ -307,7 +300,7 @@ namespace easyLib.DB
             m_dataProvider.Invalidated += DataProvider_Invalidated;
         }
 
-        void Unlock(IDisposable dpUnlocker)
+        void Unlock(IDisposable dpUnlocker) //nothrow
         {
             dpUnlocker.Dispose();
             Monitor.Exit(m_lock);
@@ -324,126 +317,45 @@ namespace easyLib.DB
 
         private void DataProvider_DatumReplaced(int ndx , IDatum datum)
         {
-            IDatum oldDatum = null;
 
-            Monitor.Enter(m_lock);
-            for (int i = 0; i < m_cache.Count; ++i)
-                if (m_cache[i].Item1 == ndx)
+            using (Lock())
+            {
+                IDatum oldDatum = null;
+
+                for (int i = 0; i < m_cache.Count; ++i)
+                    if (m_cache[i].Item1 == ndx)
+                    {
+                        oldDatum = m_cache[i].Item2;
+                        m_cache.RemoveAt(i);
+                        break;
+                    }
+
+                Assert(oldDatum != null);
+
+                T oldKey = m_selector(oldDatum);
+                T newKey = m_selector(datum);
+
+                if (!m_dataIndices.Comparer.Equals(oldKey , newKey))
+                    m_dataIndices[oldKey].Remove(ndx);
+
+                List<int> lst;
+
+                if (!m_dataIndices.TryGetValue(newKey , out lst))
                 {
-                    oldDatum = m_cache[i].Item2;
-                    m_cache.RemoveAt(i);
-                    break;
+                    lst = new List<int>();
+                    m_dataIndices[newKey] = lst;
                 }
 
-            Assert(oldDatum != null);
+                lst.Add(ndx);
 
-            T oldKey = m_selector(oldDatum);
-            T newKey = m_selector(datum);
-
-            if (!m_dataIndices.Comparer.Equals(oldKey , newKey))
-                m_dataIndices[oldKey].Remove(ndx);
-
-            List<int> lst;
-
-            if (!m_dataIndices.TryGetValue(newKey , out lst))
-            {
-                lst = new List<int>();
-                m_dataIndices[newKey] = lst;
+                DatumReplaced?.Invoke(datum);
             }
-
-            lst.Add(ndx);
-
-            Monitor.Exit(m_lock);
-
-            DatumReplaced?.Invoke(datum);
         }
 
         private void DataProvider_DatumInserted(int ndx , IDatum datum)
         {
-            T key = m_selector(datum);
-
-            List<int> lst;
-
-            Monitor.Enter(m_lock);
-            if (!m_dataIndices.TryGetValue(key , out lst))
+            using (Lock())
             {
-                lst = new List<int>();
-                m_dataIndices[key] = lst;
-            }
-
-            //datum inserted not at the end => adjust indicies
-            if (ndx < m_dataProvider.Count - 1)
-                foreach (List<int> l in m_dataIndices.Values)
-                    for (int i = 0; i < lst.Count; ++i)
-                        if (ndx <= l[i])
-                            ++l[i];
-            lst.Add(ndx);
-
-            Monitor.Exit(m_lock);
-
-            DatumInserted?.Invoke(datum);
-        }
-
-        private void DataProvider_DatumDeleting(int ndx)
-        {
-            IDatum datum = m_dataProvider.Get(ndx);
-
-            Monitor.Enter(m_lock);
-            m_cache.Add(Tuple.Create(ndx , datum));
-            Monitor.Exit(m_lock);
-        }
-
-        private void DataProvider_DatumDeleted(int ndx)
-        {
-            IDatum datum = null;
-
-            int i = 0;
-
-            Monitor.Enter(m_lock);
-
-            while (i < m_cache.Count)
-            {
-                int index = m_cache[i].Item1;
-
-                if (ndx < index)
-                {
-                    IDatum d = m_cache[i].Item2;
-                    m_cache[i] = Tuple.Create(index - 1 , d);
-                    ++i;
-                }
-                else if (index == ndx)
-                {
-                    datum = m_cache[i].Item2;
-                    m_cache.RemoveAt(i);
-                }
-            }
-
-
-            Assert(datum != null);
-
-            T key = m_selector(datum);
-            m_dataIndices[key].Remove(ndx);
-
-            //adjust indices
-            foreach (List<int> lst in m_dataIndices.Values)
-                for (int k = 0; k < lst.Count; ++k)
-                    if (ndx < lst[k])
-                        --lst[k];
-
-            Monitor.Exit(m_lock);
-
-            DatumDeleted?.Invoke(datum);
-        }
-
-        private void DataProvider_DataInserted(IList<int> indices , IList<IDatum> data)
-        {
-            Monitor.Enter(m_lock);
-
-            Assert(indices.Count == data.Count);
-
-            foreach (int ndx in indices)
-            {
-                IDatum datum = data[ndx];
                 T key = m_selector(datum);
 
                 List<int> lst;
@@ -461,36 +373,27 @@ namespace easyLib.DB
                             if (ndx <= l[i])
                                 ++l[i];
                 lst.Add(ndx);
+
+                DatumInserted?.Invoke(datum);
             }
-
-            Monitor.Exit(m_lock);
-
-            DataInserted?.Invoke(data);
         }
 
-        private void DataProvider_DataDeleting(IList<int> indices)
+        private void DataProvider_DatumDeleting(int ndx)
         {
-            Monitor.Enter(m_lock);
-
-            for (int i = 0; i < indices.Count; ++i)
+            using (Lock())
             {
-                int ndx = indices[i];
                 IDatum datum = m_dataProvider.Get(ndx);
 
                 m_cache.Add(Tuple.Create(ndx , datum));
             }
-
-            Monitor.Exit(m_lock);
         }
 
-        private void DataProvider_DataDeleted(IList<int> Indices)
+        private void DataProvider_DatumDeleted(int ndx)
         {
-            Monitor.Enter(m_lock);
-            var data = new IDatum[Indices.Count];
-
-            foreach (int ndx in Indices)
+            using (Lock())
             {
                 IDatum datum = null;
+
                 int i = 0;
 
                 while (i < m_cache.Count)
@@ -512,7 +415,6 @@ namespace easyLib.DB
 
 
                 Assert(datum != null);
-                data[ndx] = datum;
 
                 T key = m_selector(datum);
                 m_dataIndices[key].Remove(ndx);
@@ -522,20 +424,115 @@ namespace easyLib.DB
                     for (int k = 0; k < lst.Count; ++k)
                         if (ndx < lst[k])
                             --lst[k];
+
+                DatumDeleted?.Invoke(datum);
             }
+        }
 
-            Monitor.Exit(m_lock);
+        private void DataProvider_DataInserted(IList<int> indices , IList<IDatum> data)
+        {
+            using (Lock())
+            {
 
-            DataDeleted?.Invoke(data);
+                Assert(indices.Count == data.Count);
+
+                foreach (int ndx in indices)
+                {
+                    IDatum datum = data[ndx];
+                    T key = m_selector(datum);
+
+                    List<int> lst;
+
+                    if (!m_dataIndices.TryGetValue(key , out lst))
+                    {
+                        lst = new List<int>();
+                        m_dataIndices[key] = lst;
+                    }
+
+                    //datum inserted not at the end => adjust indicies
+                    if (ndx < m_dataProvider.Count - 1)
+                        foreach (List<int> l in m_dataIndices.Values)
+                            for (int i = 0; i < lst.Count; ++i)
+                                if (ndx <= l[i])
+                                    ++l[i];
+                    lst.Add(ndx);
+                }
+
+                DataInserted?.Invoke(data);
+            }
+        }
+
+        private void DataProvider_DataDeleting(IList<int> indices)
+        {
+            using (Lock())
+            {
+                for (int i = 0; i < indices.Count; ++i)
+                {
+                    int ndx = indices[i];
+                    IDatum datum = m_dataProvider.Get(ndx);
+
+                    m_cache.Add(Tuple.Create(ndx , datum));
+                }
+
+            }
+        }
+
+        private void DataProvider_DataDeleted(IList<int> Indices)
+        {
+            using (Lock())
+            {
+                var data = new IDatum[Indices.Count];
+
+                foreach (int ndx in Indices)
+                {
+                    IDatum datum = null;
+                    int i = 0;
+
+                    while (i < m_cache.Count)
+                    {
+                        int index = m_cache[i].Item1;
+
+                        if (ndx < index)
+                        {
+                            IDatum d = m_cache[i].Item2;
+                            m_cache[i] = Tuple.Create(index - 1 , d);
+                            ++i;
+                        }
+                        else if (index == ndx)
+                        {
+                            datum = m_cache[i].Item2;
+                            m_cache.RemoveAt(i);
+                        }
+                    }
+
+
+                    Assert(datum != null);
+                    data[ndx] = datum;
+
+                    T key = m_selector(datum);
+                    m_dataIndices[key].Remove(ndx);
+
+                    //adjust indices
+                    foreach (List<int> lst in m_dataIndices.Values)
+                        for (int k = 0; k < lst.Count; ++k)
+                            if (ndx < lst[k])
+                                --lst[k];
+                }
+
+                DataDeleted?.Invoke(data);
+            }
         }
 
         private void DataProvider_Invalidated()
         {
-            Monitor.Enter(m_lock);
-            Close(true);
-            Monitor.Exit(m_lock);
+            using (Lock())
+            {
+                m_dataIndices.Clear();
+                m_cache.Clear();
+                LoadData();
 
-            Invalidated?.Invoke();
+                Invalidated?.Invoke();
+            }
         }
     }
 

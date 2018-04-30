@@ -7,6 +7,9 @@ using static System.Diagnostics.Debug;
 
 namespace easyLib.DB
 {
+    /*
+     * Version: 1
+     */
     public interface IDataAccessPath
     {
         IKeyIndexer GetIndexer(uint sourceID);
@@ -14,14 +17,11 @@ namespace easyLib.DB
     }
     //-----------------------------------------------------
 
-
+    /*
+     * Version: 1
+     */
     public abstract partial class DataAccessPath: IDataAccessPath, IDisposable
     {
-
-
-        //-------------------------------------------------------------------------------------------------
-
-
         public const int DEFAULT_SIZE = 8;
 
         readonly object m_lock = new object();
@@ -30,7 +30,7 @@ namespace easyLib.DB
         readonly int m_maxSize;
 
 
-        protected DataAccessPath(int cacheSize = DEFAULT_SIZE)
+        protected DataAccessPath(int cacheSize = DEFAULT_SIZE)  //nothrow
         {
             Assert(cacheSize > 0);
 
@@ -42,20 +42,20 @@ namespace easyLib.DB
 
         public void Dispose()   //nothrow
         {
-            Monitor.Enter(m_lock);
+            lock (m_lock)
+            {
 
-            foreach (Tuple<uint , IDatumProvider> tpl in m_providers)
-                tpl.Item2.Disconnect();
+                foreach (Tuple<uint , IDatumProvider> tpl in m_providers)
+                    tpl.Item2.Dispose();
 
-            m_providers.Clear();
+                m_providers.Clear();
 
 
-            foreach (Tuple<uint , KeyIndexer> tpl in m_indexers)
-                tpl.Item2.Disconnect();
+                foreach (Tuple<uint , KeyIndexer> tpl in m_indexers)
+                    tpl.Item2.Dispose();
 
-            m_indexers.Clear();
-
-            Monitor.Exit(m_lock);
+                m_indexers.Clear();
+            }
         }
 
         public IKeyIndexer GetIndexer(uint sourceID)
@@ -91,7 +91,7 @@ namespace easyLib.DB
         }
 
 
-        //protected:        
+        //protected:                
         protected abstract IDatumProvider DoGetProvider(uint sourceID);
 
 
@@ -111,7 +111,7 @@ namespace easyLib.DB
 
             if (m_providers.Count >= m_maxSize)
                 for (int ndx = m_providers.Count - 1; ndx >= 0; --ndx)
-                    if (m_providers[ndx].Item2.ConnectionsCount == 1)
+                    if (!m_providers[ndx].Item2.IsConnected)
                     {
                         m_providers[ndx].Item2.Dispose();
                         m_providers.RemoveAt(ndx);
@@ -121,16 +121,16 @@ namespace easyLib.DB
                     }
         }
 
-        IDatumProvider QueryProvider(uint sourceID)
+        ProviderProxy QueryProvider(uint sourceID)
         {
-            IDatumProvider provider = (from tpl in m_providers
-                                       where tpl.Item1 == sourceID
-                                       select tpl.Item2).SingleOrDefault();
+            ProviderProxy provider = (from tpl in m_providers
+                                      where tpl.Item1 == sourceID
+                                      select tpl.Item2).SingleOrDefault();
 
             if (provider != null)
                 return provider;
 
-            provider = new DatumProvider(DoGetProvider(sourceID) , d => true , AggregationMode_t.Rejected);
+            provider = new ProviderProxy(DoGetProvider(sourceID));
 
             if (m_providers.Count >= m_maxSize)
                 CleanTables();

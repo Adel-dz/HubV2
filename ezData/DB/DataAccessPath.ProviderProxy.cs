@@ -1,13 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Threading;
+using static System.Diagnostics.Debug;
+
 
 namespace easyLib.DB
 {
     partial class DataAccessPath
     {
+        /*
+         * Version: 1
+         */
         class ProviderProxy: IDatumProvider
         {
             int m_refCount;
@@ -69,7 +72,7 @@ namespace easyLib.DB
             }
 
 
-            public ProviderProxy(IDatumProvider dp)
+            public ProviderProxy(IDatumProvider dp) //nothrow
             {
                 Assert(dp != null);
                 Assert(dp.IsConnected);
@@ -78,21 +81,21 @@ namespace easyLib.DB
             }
 
 
-            public IDatumProvider Provider { get; }
-            public bool IsConnected => ConnectionsCount > 0;
-            public IDataSourceInfo SourceInfo => Provider.SourceInfo;
-            public int ConnectionsCount => m_refCount;
-            public int Count => Provider.Count;
-            public bool CanRead => Provider.CanRead;
-            public bool CanWrite => Provider.CanWrite;
+            public IDatumProvider Provider { get; } //nothrow
+            public bool IsConnected => ConnectionsCount > 0;    //nothrow
+            public IDataSourceInfo SourceInfo => Provider.SourceInfo;   //nothrow   
+            public int ConnectionsCount => m_refCount;  //nothrow
+            public int Count => Provider.Count; //nothrow
+            public bool CanRead => Provider.CanRead;    //nothrow
+            public bool CanWrite => Provider.CanWrite;  //nothrow
 
-            public bool AutoFlush
+            public bool AutoFlush   //nothrow
             {
                 get { return Provider.AutoFlush; }
                 set { Provider.AutoFlush = value; }
             }
 
-            public uint DataVersion
+            public uint DataVersion //nothrow
             {
                 get { return Provider.DataVersion; }
                 set { Provider.DataVersion = value; }
@@ -117,7 +120,7 @@ namespace easyLib.DB
 
             public void Delete(IList<int> indices) => Provider.Delete(indices);
             public void Delete(int ndx) => Provider.Delete(ndx);
-            public void Dispose() => Disconnect();
+            public void Dispose() => Provider.Dispose();    //nothrow
             public IEnumerable<IDatum> Enumerate() => Provider.Enumerate();
             public IEnumerable<IDatum> Enumerate(int ndxFirst) => Provider.Enumerate(ndxFirst);
             public IList<IDatum> Get(IList<int> indices) => Provider.Get(indices);
@@ -125,9 +128,11 @@ namespace easyLib.DB
             public uint GetNextAutoID() => Provider.GetNextAutoID();
             public void Insert(IList<IDatum> items) => Provider.Insert(items);
             public void Insert(IDatum item) => Provider.Insert(item);
-            public IDisposable Lock() => Provider.Lock();
+            public IDisposable Lock() => Provider.Lock();   //nothrow
             public void Replace(int ndx , IDatum item) => Provider.Replace(ndx , item);
-            public IDisposable TryLock() => Provider.TryLock();
+            public IDisposable TryLock() => Provider.TryLock(); //nothrow
+
+            public void Clear() => Provider.Clear();
         }
 
     }
