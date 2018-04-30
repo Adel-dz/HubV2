@@ -26,7 +26,7 @@ namespace easyLib.DB
          */
         T this[uint datumID] { get; }
 
-        /* Pr:
+        /* Pre:
          * - IsConnected
          */
         T Get(uint datumID);
@@ -45,23 +45,17 @@ namespace easyLib.DB
     public interface IKeyIndexer: IKeyIndexer<IDatum>, IDisposable
     {
         event Action<IDatum> DatumInserted;
-        event Action<IDatum[]> DataInserted;
+        event Action<IList<IDatum>> DataInserted;
         event Action<IDatum> DatumDeleted;
-        event Action<IDatum[]> DataDeleted;
+        event Action<IList<IDatum>> DataDeleted;
         event Action<IDatum> DatumReplaced;
         event Action Invalidated;
 
-        /* Pre:
-         * - IsConnected == false
-         * 
-         * Post:
+        /* Post:
          * - IsConnected == true
          */
         void Connect();
 
-        /* Post:
-         * - IsConnected == false
-         */
         void Disconnect();
     }
     //--------------------------------------------------------------------
@@ -78,8 +72,8 @@ namespace easyLib.DB
         int m_refCount;
 
 
-        public event Action<IDatum[]> DataDeleted;
-        public event Action<IDatum[]> DataInserted;
+        public event Action<IList<IDatum>> DataDeleted;
+        public event Action<IList<IDatum>> DataInserted;
         public event Action<IDatum> DatumDeleted;
         public event Action<IDatum> DatumInserted;
         public event Action<IDatum> DatumReplaced;
@@ -95,7 +89,7 @@ namespace easyLib.DB
 
         public IDatum this[uint datumID] => Get(datumID);
 
-        public bool IsConnected { get; private set; }   //nothrow
+        public bool IsConnected => m_refCount > 0;   //nothrow
         public int ConnectionsCount => m_refCount;
         public IDatumAccessor<IDatum> Source => m_source;   //nothrow
 
@@ -105,6 +99,7 @@ namespace easyLib.DB
             {
                 Assert(IsConnected);
 
+                lock(m_lock)
                 return m_ndxTable.Keys;
             }
         }
@@ -112,84 +107,89 @@ namespace easyLib.DB
 
         public void Connect()
         {
-            Assert(!IsConnected);
+            IDisposable unlocker = Lock();
 
-            lock (m_lock)
+            try
             {
                 if (!IsConnected)
                 {
                     m_source.Connect();
-                    Load();
+                    LoadData();
                     RegisterHandlers();
-
-                    IsConnected = true;
                 }
 
-                ++ConnectionsCount;
+                ++m_refCount;
             }
+            catch
+            {
+                m_ndxTable.Clear();
+
+                throw;
+            }
+            finally
+            {
+                unlocker.Dispose();
+            }
+
+            Assert(IsConnected);
         }
 
         public void Disconnect()
         {
-            Assert(!IsDisposed);
+            using (Lock())
+                if (IsConnected)
+                {
+                    if (m_refCount == 1)
+                    {
+                        m_source.Disconnect();
+                        UnregisterHandlers();
+                        m_ndxTable.Clear();
+                        m_cache.Clear();
+                    }
 
-            Monitor.Enter(m_lock);
-
-            if (IsConnected)
-            {
-                Close(false);
-
-                if (ConnectionsCount == 0)
-                    Dispose();
-            }
-
-            Monitor.Exit(m_lock);
+                    --m_refCount;
+                }
         }
 
-        public void Dispose()
+        public void Dispose()   //nothrow
         {
-            Monitor.Enter(m_lock);
-
-            if (!IsDisposed)
+            try
             {
-                if (IsConnected)
-                    Close(true);
-
-                DatumDeleted = DatumInserted = DatumReplaced = null;
-                DataDeleted = DataInserted = null;
-                Invalidated = null;
-
-                IsDisposed = true;
+                Disconnect();
             }
-
-            Monitor.Exit(m_lock);
+            catch(Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Exception shut down in KeyIndexer.Dispose: {ex.Message}");
+            }
         }
 
         public IDatum Get(uint datumID)
         {
             Assert(IsConnected);
 
-            int ndx = IndexOf(datumID);
-            return ndx < 0 ? null : m_source.Get(ndx);
+            using (Lock())
+            {
+                int ndx = IndexOf(datumID);
+                return ndx < 0 ? null : m_source.Get(ndx);
+            }
         }
 
-        public int IndexOf(uint datumID)
+        public int IndexOf(uint datumID)    //nothrow
         {
             Assert(IsConnected);
 
-            Monitor.Enter(m_lock);
+            using (Lock())
+            {
+                int ndx;
 
-            int ndx;
+                if (!m_ndxTable.TryGetValue(datumID , out ndx))
+                    ndx = -1;
 
-            if (!m_ndxTable.TryGetValue(datumID , out ndx))
-                ndx = -1;
-
-            Monitor.Exit(m_lock);
-
-            return ndx;
+                return ndx;
+            }
         }
 
-        public IDisposable Lock()
+        public IDisposable Lock()   //nothrow
         {
             Monitor.Enter(m_lock);
             IDisposable srcLock = m_source.Lock();
@@ -197,7 +197,7 @@ namespace easyLib.DB
             return new AutoReleaser(() => Unlock(srcLock));
         }
 
-        public IDisposable TryLock()
+        public IDisposable TryLock()    //nothrow
         {
             if (Monitor.TryEnter(m_lock))
             {
@@ -220,13 +220,13 @@ namespace easyLib.DB
             Monitor.Exit(m_lock);
         }
 
-        void Load()
+        void LoadData()
         {
             for (int ndx = 0; ndx < m_source.Count; ++ndx)
                 m_ndxTable.Add(m_source.Get(ndx).ID , ndx);
         }
 
-        void RegisterHandlers()
+        void RegisterHandlers() //nothrow
         {
             m_source.DataDeleted += Source_DataDeleted;
             m_source.DataDeleting += Source_DataDeleting;
@@ -239,25 +239,7 @@ namespace easyLib.DB
             m_source.Invalidated += Source_Invalidated;
         }
 
-        void Close(bool closeAll)
-        {
-            if (ConnectionsCount > 0)
-            {
-                if (closeAll)
-                    ConnectionsCount = 1;
-
-                if (--ConnectionsCount == 0)
-                {
-                    UnregisterHandlers();
-                    m_ndxTable.Clear();
-                    m_cache.Clear();
-                    m_source.Disconnect();
-                    IsConnected = false;
-                }
-            }
-        }
-
-        void UnregisterHandlers()
+        void UnregisterHandlers()   //nothrow
         {
             m_source.DataDeleted -= Source_DataDeleted;
             m_source.DataDeleting -= Source_DataDeleting;
@@ -274,19 +256,21 @@ namespace easyLib.DB
         //handlers:
         private void Source_Invalidated()
         {
-            lock (m_lock)
+            lock(m_lock)
             {
                 m_ndxTable.Clear();
                 m_cache.Clear();
 
-                Load();
+                LoadData();
             }
         }
 
         private void Source_DatumReplacing(int ndx , IDatum datum)
         {
             Monitor.Enter(m_lock);
+
             m_cache.Add(ndx , datum);
+
             Monitor.Exit(m_lock);
         }
 
@@ -297,6 +281,7 @@ namespace easyLib.DB
             Assert(m_cache.ContainsKey(ndx));
 
             //IDatum.ID is immutable => juste remove from cache
+
             Monitor.Enter(m_lock);
             m_cache.Remove(ndx);
             Monitor.Exit(m_lock);
@@ -353,11 +338,11 @@ namespace easyLib.DB
             DatumDeleted?.Invoke(datum);
         }
 
-        private void Source_DataInserted(int[] indices , IDatum[] data)
+        private void Source_DataInserted(IList<int> indices , IList<IDatum> data)
         {
             Monitor.Enter(m_lock);
 
-            for (int i = 0; i < indices.Length; ++i) //le traitement en une seule passe est invalide.
+            for (int i = 0; i < indices.Count; ++i) //le traitement en une seule passe est invalide.
             {
                 IDatum datum = data[i];
 
@@ -378,10 +363,10 @@ namespace easyLib.DB
             DataInserted?.Invoke(data);
         }
 
-        private void Source_DataDeleting(int[] indices)
+        private void Source_DataDeleting(IList<int> indices)
         {
             lock (m_lock)
-                for (int i = 0; i < indices.Length; ++i)
+                for (int i = 0; i < indices.Count; ++i)
                 {
                     int ndx = indices[i];
                     IDatum datum = m_source.Get(ndx);
@@ -390,13 +375,13 @@ namespace easyLib.DB
                 }
         }
 
-        private void Source_DataDeleted(int[] indices)
+        private void Source_DataDeleted(IList<int> indices)
         {
-            var data = new IDatum[indices.Length];
+            var data = new IDatum[indices.Count];
 
             Monitor.Enter(m_lock);
 
-            for (int i = 0; i < indices.Length; ++i)
+            for (int i = 0; i < indices.Count; ++i)
             {
                 int ndx = indices[i];
 

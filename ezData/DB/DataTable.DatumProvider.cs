@@ -59,7 +59,7 @@ namespace easyLib.DB
                     Assert(IsConnected);
 
                     lock (m_table)
-                        return m_table.Header.Version;
+                        return m_table.Header.DataVersion;
                 }
 
                 set
@@ -67,7 +67,7 @@ namespace easyLib.DB
                     Assert(IsConnected);
 
                     lock (m_table)
-                        m_table.Header.Version = value;
+                        m_table.Header.DataVersion = value;
                 }
             }
 

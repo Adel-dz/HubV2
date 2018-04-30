@@ -184,11 +184,6 @@ namespace easyLib.DB
             try
             {
                 Disconnect();
-
-                DatumInserted = DatumReplaced = DatumReplacing = null;
-                DatumDeleted = DatumDeleting = null;
-                DataDeleted = DataDeleting = null;
-                DataInserted = null;
             }
             catch (Exception ex)
             {

@@ -44,8 +44,6 @@
     <Compile Include="DB\CorruptedFileException.cs" />
     <Compile Include="DB\CorruptedStreamException.cs" />
     <Compile Include="DB\DataAccessPath.cs" />
-    <Compile Include="DB\DataAccessPath.IndexerProxy.cs" />
-    <Compile Include="DB\DataAccessPath.ProviderProxy.cs" />
     <Compile Include="DB\DataSource.cs" />
     <Compile Include="DB\DataSourceInfo.cs" />
     <Compile Include="DB\DataTable.cs" />
@@ -58,6 +56,7 @@
     <Compile Include="DB\DatumSetter.cs" />
     <Compile Include="DB\FramedTable.cs" />
     <Compile Include="DB\FramedTable.TableHeader.cs" />
+    <Compile Include="DB\FuzzyTable.cs" />
     <Compile Include="DB\KeyIndexer.cs" />
     <Compile Include="DB\ProviderMapper.cs" />
     <Compile Include="DB\ProvidersTracker.cs" />

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using static System.Diagnostics.Debug;
 
 
@@ -121,23 +120,23 @@ namespace easyLib.DB
                     }
         }
 
-        ProviderProxy QueryProvider(uint sourceID)
+        IDatumProvider QueryProvider(uint sourceID)
         {
-            ProviderProxy provider = (from tpl in m_providers
-                                      where tpl.Item1 == sourceID
-                                      select tpl.Item2).SingleOrDefault();
+            IDatumProvider provider = (from tpl in m_providers
+                                       where tpl.Item1 == sourceID
+                                       select tpl.Item2).SingleOrDefault();
 
             if (provider != null)
                 return provider;
 
-            provider = new ProviderProxy(DoGetProvider(sourceID));
+            provider = DoGetProvider(sourceID);
+            provider.Connect();
 
             if (m_providers.Count >= m_maxSize)
                 CleanTables();
 
             m_providers.Add(Tuple.Create(sourceID , provider));
-            provider.Connect();
-
+            
             return provider;
         }
     }

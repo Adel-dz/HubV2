@@ -3,6 +3,9 @@ using System.Diagnostics;
 
 namespace easyLib.DB
 {
+    /*
+     * Version: 1
+     */ 
     static class ProvidersTracker
     {
         readonly static Dictionary<uint , List<object>> m_tableProviders = 
@@ -10,7 +13,7 @@ namespace easyLib.DB
 
 
         [Conditional("DEBUG")]
-        public static void RegisterProvider<T>(IDatumAccessor<T> provider , uint tblID)
+        public static void RegisterProvider<T>(IDatumAccessor<T> provider , uint tblID) //nothrow
         {
             Debug.Assert(provider != null);
 
@@ -24,7 +27,7 @@ namespace easyLib.DB
         }
 
         [Conditional("DEBUG")]
-        public static void RegisterProvider<T>(IDatumAccessor<T> provider , IDatumAccessor<T> dpSame)
+        public static void RegisterProvider<T>(IDatumAccessor<T> provider , IDatumAccessor<T> dpSame)   //nothrow
         {
             Debug.Assert(provider != null);
             Debug.Assert(dpSame != null);
@@ -40,7 +43,7 @@ namespace easyLib.DB
         }
 
         [Conditional("DEBUG")]
-        public static void UnregisterProvider<T>(IDatumAccessor<T> provider)
+        public static void UnregisterProvider<T>(IDatumAccessor<T> provider)    //nothrow
         {
             if (provider != null)
                 lock (m_tableProviders)
@@ -52,7 +55,7 @@ namespace easyLib.DB
 
 
         [Conditional("DEBUG")]
-        public static void AssertAll()
+        public static void AssertAll()  //nothrow
         {
             int dpCount = 0;
 

@@ -7,14 +7,17 @@ namespace easyLib.DB
 {
     partial class FramedTable<T>
     {
-        class TableHeader: DataTable<T>.FileHeader
+        /*
+         * Version: 1
+         */ 
+        class TableHeader: FileHeader
         {
             const string SIGNATURE = "EZDBFR1";
             int m_slotsCount;
             int m_ndxFirstFreeSolt;
 
-
-            public int SlotsCount //total slots
+            //total slots
+            public int SlotsCount   //nothrow
             {
                 get { return m_slotsCount; }
 
@@ -25,7 +28,7 @@ namespace easyLib.DB
                 }
             } 
 
-            public int FreeSlotsHead
+            public int FreeSlotsHead    //nothrow
             {
                 get { return m_ndxFirstFreeSolt; }
 
@@ -39,7 +42,7 @@ namespace easyLib.DB
 
 
             //proteced:
-            protected override byte[] Signature => Encoding.UTF8.GetBytes(SIGNATURE);
+            protected override byte[] Signature => Encoding.UTF8.GetBytes(SIGNATURE);   //nothrow
 
             protected override void DoRead(IReader reader)
             {

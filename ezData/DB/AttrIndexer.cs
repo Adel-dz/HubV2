@@ -147,7 +147,6 @@ namespace easyLib.DB
             catch
             {
                 m_dataIndices.Clear();
-                m_cache.Clear();
 
                 throw;
             }
@@ -155,6 +154,8 @@ namespace easyLib.DB
             {
                 unlocker.Dispose();
             }
+
+            Assert(IsConnected);
         }
 
         public void Disconnect()
@@ -179,10 +180,6 @@ namespace easyLib.DB
             try
             {
                 Disconnect();
-
-                DatumDeleted = DatumInserted = DatumReplaced = null;
-                DataDeleted = DataInserted = null;
-                Invalidated = null;
             }
             catch (Exception ex)
             {

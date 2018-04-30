@@ -2,11 +2,14 @@
 
 namespace easyLib.DB
 {
+    /*
+     * Version: 1
+     */ 
     public interface IDataSourceInfo
     {
-        uint DataVersion { get; }
-        DateTime LastAccessTime { get; }
-        DateTime CreationTime { get; }
-        DateTime LastWriteTime { get; }
+        uint DataVersion { get; }   //nothrow
+        DateTime LastAccessTime { get; }    //nothrow
+        DateTime CreationTime { get; }  //nothrow
+        DateTime LastWriteTime { get; } //nothrow
     }
 }
