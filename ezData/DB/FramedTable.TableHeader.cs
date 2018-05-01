@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using easyLib.IO;
+using static System.Diagnostics.Debug;
 
 
 
@@ -23,6 +24,8 @@ namespace easyLib.DB
 
                 set
                 {
+                    Assert(value >= 0);
+
                     m_slotsCount = value;
                     IsDirty = true;
                 }
@@ -34,6 +37,8 @@ namespace easyLib.DB
 
                 set
                 {
+                    Assert(value == NULL_NDX || value >= 0);
+
                     m_ndxFirstFreeSolt = value;
                     IsDirty = true;
                 }
@@ -46,12 +51,16 @@ namespace easyLib.DB
 
             protected override void DoRead(IReader reader)
             {
+                Assert(reader != null);
+
                 m_slotsCount = reader.ReadInt();
                 m_ndxFirstFreeSolt = reader.ReadInt();               
             }
 
             protected override void DoWrite(IWriter writer)
             {
+                Assert(writer != null);
+
                 writer.Write(m_slotsCount);
                 writer.Write(m_ndxFirstFreeSolt);
             }

@@ -57,6 +57,7 @@
     <Compile Include="DB\FramedTable.cs" />
     <Compile Include="DB\FramedTable.TableHeader.cs" />
     <Compile Include="DB\FuzzyTable.cs" />
+    <Compile Include="DB\FuzzyTable.TableHeader.cs" />
     <Compile Include="DB\KeyIndexer.cs" />
     <Compile Include="DB\ProviderMapper.cs" />
     <Compile Include="DB\ProvidersTracker.cs" />
